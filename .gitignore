@@ -1,0 +1,32 @@
+# Rutas relativas a backend/, que es la raiz de este repositorio.
+
+# --- Secretos ---
+.env
+.env.local
+.env.*.local
+!.env.example
+
+# --- Documentacion ---
+*.md
+
+# --- Node ---
+node_modules/
+dist/
+build/
+*.tsbuildinfo
+npm-debug.log*
+yarn-error.log*
+coverage/
+
+# --- Modelo de embeddings que descarga transformers.js (pesa ~120 MB) ---
+.cache/
+
+# --- Archivos subidos por usuarios ---
+uploads/
+
+# --- Editor / SO ---
+.vscode/*
+!.vscode/extensions.json
+.idea/
+Thumbs.db
+Desktop.ini
