@@ -18,6 +18,10 @@ npm-debug.log*
 yarn-error.log*
 coverage/
 
+# --- Pruebas: se quedan en local ---
+*.spec.ts
+test/
+
 # --- Modelo de embeddings que descarga transformers.js (pesa ~120 MB) ---
 .cache/
 

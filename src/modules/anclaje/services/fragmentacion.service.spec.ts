@@ -15,8 +15,7 @@ describe('FragmentacionService', () => {
       paginas([palabras(200, 'a'), palabras(200, 'b')]),
     );
 
-    // Es la garantía que sostiene las citas: si un fragmento apunta a la
-    // página equivocada, el estudiante abre la página y no encuentra nada.
+    // Si un fragmento apunta a la página equivocada, la cita no sirve.
     for (const fragmento of fragmentos) {
       const prefijo = fragmento.texto.startsWith('a') ? 1 : 2;
       expect(fragmento.pagina).toBe(prefijo);

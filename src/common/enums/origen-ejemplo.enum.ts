@@ -1,7 +1,4 @@
-/**
- * Origen de un ejemplo de entrenamiento. Ambos son etiquetas humanas:
- * no existe "predicción del modelo" para evitar auto-entrenamiento.
- */
+/** Origen de un ejemplo de entrenamiento; ambos son etiquetas humanas. */
 export enum OrigenEjemplo {
   Seed = 'seed',
   UserFeedback = 'user_feedback',

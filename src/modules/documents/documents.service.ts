@@ -19,7 +19,6 @@ import { MlService } from '../ml/ml.service';
 import { Document } from './entities/document.entity';
 import { ExtraccionService } from './services/extraccion.service';
 
-/** No hace falta el libro entero para decidir la materia. */
 const CARACTERES_PARA_CLASIFICAR = 200_000;
 
 @Injectable()
@@ -74,9 +73,6 @@ export class DocumentsService {
 
     const guardado = await this.documentos.save(documento);
 
-    // Los fragmentos necesitan el id del documento, así que la indexación va
-    // después de guardar. Si falla, el libro sigue siendo utilizable: solo se
-    // queda sin citas hasta que se reindexe.
     try {
       const huella = await this.anclaje.indexar(guardado.id, paginas);
       if (huella.length > 0) {
@@ -93,7 +89,6 @@ export class DocumentsService {
     return guardado;
   }
 
-  /** Lista los documentos del usuario. `extractedText` no viaja aquí. */
   async listar(userId: string) {
     const documentos = await this.documentos.find({
       where: { userId },
@@ -108,7 +103,6 @@ export class DocumentsService {
       where: { id, userId },
     });
 
-    // El filtro por userId va en el WHERE: un id ajeno da 404, no 403.
     if (!documento) {
       throw new NotFoundException('No se encontró el documento.');
     }
@@ -116,7 +110,6 @@ export class DocumentsService {
     return documento;
   }
 
-  /** Igual que `obtener`, pero incluyendo el texto completo del libro. */
   async obtenerConTexto(userId: string, id: string): Promise<Document> {
     const documento = await this.documentos
       .createQueryBuilder('documento')
@@ -150,7 +143,7 @@ export class DocumentsService {
       // Etiqueta lista para la tarjeta.
       etiqueta: etiquetaLegible(materia, documento.nivel),
       classifierConfidence: documento.classifierConfidence,
-      // Los chips del chat dependen de la materia (sección 6.3).
+      // Los chips del chat dependen de la materia.
       accionesRapidas: ACCIONES_POR_MATERIA[materia ?? Materia.Otro],
     };
   }
@@ -168,12 +161,18 @@ export class DocumentsService {
   }
 
   private titulaDesdeNombre(nombreArchivo: string): string {
-    const sinExtension = nombreArchivo.replace(/\.(pdf|epub)$/i, '');
+    const nombre = this.repararCodificacion(nombreArchivo);
+    const sinExtension = nombre.replace(/\.(pdf|epub)$/i, '');
     const limpio = sinExtension.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
     return limpio.length > 0 ? limpio.slice(0, 200) : 'Documento sin título';
   }
 
-  /** Un color de portada estable por materia, para que la Biblioteca se lea. */
+  private repararCodificacion(nombre: string): string {
+    const reparado = Buffer.from(nombre, 'latin1').toString('utf8');
+
+    return reparado.includes('�') ? nombre : reparado;
+  }
+
   private elegirTinte(materia: Materia | null): string {
     return TINTE_POR_MATERIA[materia ?? Materia.Otro];
   }

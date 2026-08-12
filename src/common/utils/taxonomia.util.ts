@@ -17,7 +17,7 @@ export const NIVEL_LEGIBLE: Record<Nivel, string> = {
   [Nivel.Basicos]: 'Ciclo básico',
 };
 
-/** Registro del system prompt según el nivel detectado (sección 6.2). */
+/** Registro del system prompt según el nivel detectado. */
 export const INSTRUCCION_POR_NIVEL: Record<Nivel, string> = {
   [Nivel.PrimariaBaja]:
     'Usa palabras muy sencillas y frases cortas. Da ejemplos concretos y ' +
@@ -30,7 +30,7 @@ export const INSTRUCCION_POR_NIVEL: Record<Nivel, string> = {
     'vez que aparezca.',
 };
 
-/** Chips de acción rápida del chat, según la materia (sección 6.3). */
+/** Chips de acción rápida del chat, según la materia. */
 export const ACCIONES_POR_MATERIA: Record<Materia, string[]> = {
   [Materia.Matematicas]: [
     'Explica este problema paso a paso',
@@ -60,7 +60,7 @@ export const ACCIONES_POR_MATERIA: Record<Materia, string[]> = {
   [Materia.Otro]: ['Resúmeme el tema', 'Hazme flashcards', 'Generar examen'],
 };
 
-/** Colores de portada del prototipo (sección 8). */
+/** Colores de portada por materia. */
 export const TINTE_POR_MATERIA: Record<Materia, string> = {
   [Materia.Matematicas]: '#B4552E',
   [Materia.CienciasNaturales]: '#3F5E57',

@@ -45,8 +45,7 @@ describe('AuthService', () => {
         name: '  José  ',
       });
 
-      // Sin normalizar, "A@x.com" y "a@x.com" serían cuentas distintas y el
-      // índice único no lo impediría.
+      // Sin normalizar, "A@x.com" y "a@x.com" serían cuentas distintas.
       expect(usuarios.create).toHaveBeenCalledWith(
         expect.objectContaining({ email: 'jose.pablo@ejemplo.com', name: 'José' }),
       );
@@ -90,8 +89,7 @@ describe('AuthService', () => {
     });
 
     it('devuelve el mismo error exista o no el correo', async () => {
-      // Si los mensajes difirieran, cualquiera podría averiguar qué correos
-      // tienen cuenta simplemente probando.
+      // Un mensaje distinto delataría qué correos tienen cuenta.
       usuarios.findOne.mockResolvedValue(null);
       const inexistente = await servicio
         .login({ email: 'nadie@b.com', password: 'x' })
@@ -111,9 +109,7 @@ describe('AuthService', () => {
     });
 
     it('compara contra un hash señuelo cuando el correo no existe', async () => {
-      // El login de un correo inexistente debe costar lo mismo que uno real.
-      // Sin el señuelo retornaría de inmediato y la diferencia de tiempo
-      // delataría qué correos están registrados.
+      // Un correo inexistente debe tardar lo mismo que uno registrado.
       usuarios.findOne.mockResolvedValue(null);
 
       const inicio = Date.now();

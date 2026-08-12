@@ -46,17 +46,11 @@ export class Document {
   @Column({ default: 0 })
   pages: number;
 
-  /**
-   * Texto completo del libro, para el system prompt Zero-RAG.
-   * `select: false`: pesa MB y la Biblioteca lista todos los documentos.
-   */
+  /** Texto completo del libro; `select: false` porque pesa MB. */
   @Column({ name: 'extracted_text', type: 'text', select: false })
   extractedText: string;
 
-  /**
-   * Embedding promedio, para detectar libros ya subidos.
-   * Solo se compara contra documentos del mismo usuario (sección 4.6).
-   */
+  /** Embedding promedio: detecta libros que el usuario ya subió. */
   @Column({ name: 'doc_embedding', type: 'double precision', array: true, default: () => "'{}'" })
   docEmbedding: number[];
 

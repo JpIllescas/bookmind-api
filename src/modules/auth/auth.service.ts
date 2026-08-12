@@ -22,7 +22,7 @@ export interface RespuestaAuth {
 
 @Injectable()
 export class AuthService {
-  /** Hash real del mismo coste, calculado al primer uso. Ver `login`. */
+  /** Hash bcrypt real usado como señuelo, calculado al primer uso. */
   private hashSenuelo?: string;
 
   constructor(

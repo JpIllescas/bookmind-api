@@ -8,10 +8,7 @@ export interface Fragmento {
   texto: string;
 }
 
-/**
- * Palabras por fragmento. Suficiente para que el pasaje tenga contexto propio
- * y corto para que la cita apunte a un lugar concreto y no a media página.
- */
+/** Palabras por fragmento: con contexto propio, pero sin abarcar media página. */
 const PALABRAS_POR_FRAGMENTO = 110;
 
 /** Palabras repetidas entre fragmentos vecinos. */
@@ -22,16 +19,7 @@ const MINIMO_PALABRAS = 15;
 
 @Injectable()
 export class FragmentacionService {
-  /**
-   * Parte el libro en fragmentos, conservando de qué página salió cada uno.
-   *
-   * Se fragmenta por página y no sobre el texto corrido: mezclar dos páginas
-   * en un fragmento haría que la cita apuntara a una de las dos al azar, y la
-   * cita es justamente lo que el estudiante va a verificar.
-   *
-   * Los fragmentos se solapan porque una frase partida justo en el corte
-   * quedaría sin contexto en ambos lados y no se parecería a nada.
-   */
+  /** Parte cada página por separado para no perder de dónde salió el fragmento. */
   fragmentar(paginas: PaginaExtraida[]): Fragmento[] {
     const fragmentos: Fragmento[] = [];
     let indice = 0;
@@ -45,8 +33,7 @@ export class FragmentacionService {
       for (let i = 0; i < palabras.length; i += paso) {
         const trozo = palabras.slice(i, i + PALABRAS_POR_FRAGMENTO);
 
-        // La cola de una página puede quedar muy corta tras el último corte;
-        // ya está cubierta por el solape del fragmento anterior.
+        // La cola corta de la página ya viene en el solape del fragmento previo.
         if (trozo.length < MINIMO_PALABRAS) break;
 
         fragmentos.push({

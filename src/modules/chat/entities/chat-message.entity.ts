@@ -60,7 +60,7 @@ export class ChatMessage {
   })
   blockType: TipoBloque;
 
-  // --- Salida del verificador de anclaje (pieza 2). Solo en mensajes de la IA ---
+  // --- Salida del verificador de anclaje (pieza 2); solo en mensajes de la IA ---
 
   /** 0..1. Qué tan anclada al libro está la respuesta. */
   @Column({ name: 'grounding_score', type: 'double precision', nullable: true })

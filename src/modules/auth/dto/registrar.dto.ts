@@ -4,8 +4,7 @@ export class RegistrarDto {
   @IsEmail({}, { message: 'El correo no tiene un formato válido.' })
   email: string;
 
-  // Sin reglas de composición: los usuarios son niños y esas reglas empujan
-  // a contraseñas predecibles tipo "Password1".
+  // Sin reglas de composición: empujan a contraseñas predecibles.
   @IsString()
   @MinLength(8, { message: 'La contraseña debe tener al menos 8 caracteres.' })
   // bcrypt trunca en 72 bytes en silencio; mejor rechazar.

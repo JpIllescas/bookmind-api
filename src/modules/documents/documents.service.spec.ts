@@ -11,7 +11,6 @@ import { Document } from './entities/document.entity';
 import { DocumentsService } from './documents.service';
 import { ExtraccionService } from './services/extraccion.service';
 
-/** Ver la nota sobre tipado de mocks en `auth.service.spec.ts`. */
 function crearRepositorioFalso() {
   return {
     find: jest.fn<Promise<Document[]>, [unknown]>(),
@@ -68,8 +67,6 @@ describe('DocumentsService', () => {
         NotFoundException,
       );
 
-      // Es la garantía central del documento académico: la consulta nunca
-      // puede traer un documento ajeno, ni siquiera para descartarlo después.
       expect(documentos.findOne).toHaveBeenCalledWith({
         where: { id: 'doc-de-otro', userId: 'usuario-a' },
       });
@@ -82,7 +79,6 @@ describe('DocumentsService', () => {
         .obtener('usuario-a', 'doc-de-otro')
         .catch((e: Error) => e);
 
-      // Un 403 confirmaría que ese documento existe. El 404 no revela nada.
       expect(error).toBeInstanceOf(NotFoundException);
     });
   });
@@ -111,8 +107,6 @@ describe('DocumentsService', () => {
     });
 
     it('guarda el documento aunque el clasificador esté caído', async () => {
-      // Que una pieza auxiliar falle no debe impedirle a un estudiante subir
-      // su libro: se guarda sin materia y se reclasifica después.
       ml.clasificar.mockResolvedValue(null);
 
       const documento = await servicio.subir('usuario-a', archivoFalso);
@@ -133,6 +127,36 @@ describe('DocumentsService', () => {
       );
     });
 
+    it('repara los acentos del nombre del archivo', async () => {
+      ml.clasificar.mockResolvedValue(null);
+      const nombreMalDecodificado = Buffer.from(
+        'Agentes Autónomos.pdf',
+        'utf8',
+      ).toString('latin1');
+
+      await servicio.subir('usuario-a', {
+        ...archivoFalso,
+        originalname: nombreMalDecodificado,
+      } as Express.Multer.File);
+
+      expect(documentos.create).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Agentes Autónomos' }),
+      );
+    });
+
+    it('no toca los nombres que ya están bien', async () => {
+      ml.clasificar.mockResolvedValue(null);
+
+      await servicio.subir('usuario-a', {
+        ...archivoFalso,
+        originalname: 'Ciencias_Naturales_6to.pdf',
+      } as Express.Multer.File);
+
+      expect(documentos.create).toHaveBeenCalledWith(
+        expect.objectContaining({ title: 'Ciencias Naturales 6to' }),
+      );
+    });
+
     it('rechaza formatos que no sean PDF ni EPUB', async () => {
       await expect(
         servicio.subir('usuario-a', {
@@ -143,7 +167,6 @@ describe('DocumentsService', () => {
     });
 
     it('no manda el libro entero al clasificador', async () => {
-      // Clasificar 300 páginas no mejora el resultado y encarece cada subida.
       extraccion.extraer.mockResolvedValue({
         paginas: [],
         textoCompleto: 'a'.repeat(500_000),

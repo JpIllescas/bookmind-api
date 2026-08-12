@@ -17,8 +17,7 @@ import { ExtraccionService } from './services/extraccion.service';
     MlModule,
     AnclajeModule,
 
-    // Aquí y no en el decorador del controlador: un argumento de decorador se
-    // evalúa al importar el archivo, antes de que el .env esté cargado.
+    // Aquí y no en el controlador: el decorador se evalúa antes del .env.
     MulterModule.register({
       // En memoria: el libro nunca queda como archivo suelto en el servidor.
       limits: {

@@ -7,6 +7,7 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { dataSourceOptions } from './common/configuration/typeorm.config';
 import { AnclajeModule } from './modules/anclaje/anclaje.module';
 import { AuthModule } from './modules/auth/auth.module';
+import { ChatModule } from './modules/chat/chat.module';
 import { DocumentsModule } from './modules/documents/documents.module';
 import { HealthModule } from './modules/health/health.module';
 import { MlModule } from './modules/ml/ml.module';
@@ -26,6 +27,7 @@ import { UsersModule } from './modules/users/users.module';
     MlModule,
     AnclajeModule,
     DocumentsModule,
+    ChatModule,
     HealthModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

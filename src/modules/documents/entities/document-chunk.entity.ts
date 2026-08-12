@@ -10,10 +10,7 @@ import {
 
 import { Document } from './document.entity';
 
-/**
- * Fragmento del libro con su embedding. Índice de la pieza 2 para las citas
- * por página, y recuperación de respaldo si el libro no cabe en contexto.
- */
+/** Fragmento con su embedding: el índice de la pieza 2 para citar páginas. */
 @Entity('document_chunks')
 @Unique(['documentId', 'indice'])
 @Index(['documentId'])

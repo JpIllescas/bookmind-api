@@ -6,11 +6,6 @@ import { AnclajeService } from './anclaje.service';
 import { EmbeddingsService } from './services/embeddings.service';
 import { FragmentacionService } from './services/fragmentacion.service';
 
-/**
- * Vectores de juguete en 3 dimensiones: se puede razonar a mano qué coseno da
- * cada par, sin depender del modelo real. Lo que se prueba es la lógica de
- * anclaje, no la calidad de los embeddings.
- */
 const EJE_X = [1, 0, 0];
 const EJE_Y = [0, 1, 0];
 const CASI_X = [0.97, 0.243, 0];
@@ -81,7 +76,6 @@ describe('AnclajeService', () => {
 
       const r = await servicio.verificar('doc-1', 'Una afirmación cualquiera del libro.');
 
-      // El fragmento que más se parece es el segundo, o sea la página 2.
       expect(r.citations[0].page).toBe(2);
     });
 
@@ -100,8 +94,61 @@ describe('AnclajeService', () => {
       ]);
     });
 
+    it('no castiga un rechazo correcto', async () => {
+      indexado([EJE_X]);
+
+      const r = await servicio.verificar(
+        'doc-1',
+        'Eso no aparece en este libro. Puedes revisar este dato en el Capítulo 3.',
+      );
+
+      expect(r.groundingScore).toBeNull();
+      expect(r.flaggedClaims).toHaveLength(0);
+      expect(embeddings.embeberConsultas).not.toHaveBeenCalled();
+    });
+
+    it('separa las frases meta de las afirmaciones reales', async () => {
+      indexado([EJE_X]);
+      embeddings.embeberConsultas.mockResolvedValue([CASI_X]);
+
+      const r = await servicio.verificar(
+        'doc-1',
+        'La célula es la unidad básica de los seres vivos. Puedes revisarlo en el capítulo 2.',
+      );
+
+      expect(r.citations).toHaveLength(1);
+      expect(r.citations[0].claim).toContain('célula');
+    });
+
+    it('limpia el Markdown antes de citar', async () => {
+      indexado([EJE_X]);
+      embeddings.embeberConsultas.mockResolvedValue([CASI_X]);
+
+      const r = await servicio.verificar(
+        'doc-1',
+        '### 1. Los agentes\n\n---\n\n* **Agentes tradicionales:** son programas con reglas fijas.',
+      );
+
+      expect(r.citations).toHaveLength(1);
+      const cita = r.citations[0].claim;
+      expect(cita).not.toMatch(/[#*`]|---/);
+      expect(cita).toContain('Agentes tradicionales');
+    });
+
+    it('no parte las abreviaturas', async () => {
+      indexado([EJE_X]);
+      embeddings.embeberConsultas.mockResolvedValue([CASI_X]);
+
+      const r = await servicio.verificar(
+        'doc-1',
+        'La obra se ambienta en el París de 1924 (págs. 9-20) según la primera parte.',
+      );
+
+      expect(r.citations).toHaveLength(1);
+      expect(r.citations[0].claim).toContain('9-20');
+    });
+
     it('sin índice devuelve 0, no 1', async () => {
-      // Devolver 1.0 sería afirmar "todo comprobado" cuando no se comprobó nada.
       indexado([]);
 
       const r = await servicio.verificar('doc-1', 'Cualquier afirmación sobre el libro.');
@@ -115,7 +162,6 @@ describe('AnclajeService', () => {
       indexado([EJE_X]);
       embeddings.embeberConsultas.mockResolvedValue([CASI_X]);
 
-      // "Claro." y "Mira:" no son afirmaciones sobre el contenido.
       const r = await servicio.verificar(
         'doc-1',
         'Claro. Mira: la fotosíntesis convierte la luz del sol en alimento.',
@@ -135,7 +181,6 @@ describe('AnclajeService', () => {
       ]);
 
       expect(fragmentos.save).toHaveBeenCalled();
-      // Promedio de dos ejes ortogonales, renormalizado.
       expect(huella).toHaveLength(3);
       expect(Math.hypot(...huella)).toBeCloseTo(1, 5);
     });

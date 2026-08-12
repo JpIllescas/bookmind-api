@@ -10,25 +10,14 @@ type Extractor = (
 /** Cuántos textos se embeben por lote. Más grande satura la memoria. */
 const LOTE = 32;
 
-/**
- * Embeddings locales con transformers.js (pieza 2).
- *
- * Corre en CPU, sin API externa: el texto del libro nunca sale del servidor,
- * que es lo que sostiene la promesa de aislamiento del documento académico.
- */
+/** Embeddings locales (pieza 2) en CPU: el texto nunca sale del servidor. */
 @Injectable()
 export class EmbeddingsService {
   private readonly logger = new Logger(EmbeddingsService.name);
   private extractor?: Extractor;
   private cargando?: Promise<Extractor>;
 
-  /**
-   * Carga el modelo la primera vez que se usa.
-   *
-   * La primera llamada descarga ~100 MB y tarda unos segundos; las siguientes
-   * lo toman de `.cache`. Se guarda la promesa para que dos subidas
-   * simultáneas no disparen dos descargas.
-   */
+  /** Carga perezosa; la promesa se guarda para no descargar el modelo dos veces. */
   private async obtenerExtractor(): Promise<Extractor> {
     if (this.extractor) return this.extractor;
 
@@ -52,12 +41,7 @@ export class EmbeddingsService {
     return this.cargando;
   }
 
-  /**
-   * Embebe fragmentos del libro.
-   *
-   * El prefijo `passage:` no es opcional: los modelos e5 se entrenaron con él
-   * y omitirlo degrada la similitud de forma notable.
-   */
+  /** Embebe fragmentos del libro. Los modelos e5 esperan el prefijo `passage:`. */
   embeberPasajes(textos: string[]): Promise<number[][]> {
     return this.embeber(textos, 'passage: ');
   }
@@ -82,10 +66,7 @@ export class EmbeddingsService {
     return vectores;
   }
 
-  /**
-   * Similitud coseno. Los vectores vienen normalizados del modelo, así que el
-   * producto punto ya es el coseno.
-   */
+  /** Similitud coseno; los vectores ya vienen normalizados del modelo. */
   static coseno(a: number[], b: number[]): number {
     let producto = 0;
     for (let i = 0; i < a.length; i += 1) producto += a[i] * b[i];

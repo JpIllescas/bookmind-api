@@ -50,10 +50,9 @@ export class ExtraccionService {
     };
   }
 
-  /** Página por página: es lo que permite las citas de la pieza 2. */
+  /** Página por página, que es lo que permite citar dónde estaba cada cosa. */
   private async extraerDePdf(buffer: Buffer): Promise<PaginaExtraida[]> {
-    // Import dinámico porque pdfjs-dist es ESM y esto compila a CommonJS.
-    // La build `legacy` es la que corre en Node.
+    // Import dinámico: pdfjs-dist es ESM y esto compila a CommonJS.
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
     const tarea = pdfjs.getDocument({
@@ -83,20 +82,14 @@ export class ExtraccionService {
 
       return paginas;
     } finally {
-      // En pdf.js v6 `destroy()` está en la tarea, no en el documento.
-      // Omitirlo deja el worker colgado por cada libro subido.
+      // En pdf.js v6 `destroy()` está en la tarea: si no, el worker queda vivo.
       await tarea.destroy();
     }
   }
 
-  /**
-   * Recorre el spine del EPUB. Sin `epub2`: arrastra un adm-zip vulnerable a
-   * ZIP bomba, y aquí el archivo lo sube el usuario. El orden del spine hace
-   * de número de página.
-   */
+  /** Recorre el spine del EPUB: su orden hace de número de página. */
   private async extraerDeEpub(buffer: Buffer): Promise<PaginaExtraida[]> {
-    // node-stream-zip lee de archivo, no de buffer, y así no descomprime
-    // 80 MB en memoria.
+    // node-stream-zip lee de archivo, no de buffer: no descomprime en memoria.
     const { file, limpiar } = await this.escribirTemporal(buffer);
     const zip = new StreamZip.async({ file, storeEntries: true });
 

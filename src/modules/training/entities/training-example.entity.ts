@@ -10,17 +10,14 @@ import { Materia } from '../../../common/enums/materia.enum';
 import { Nivel } from '../../../common/enums/nivel.enum';
 import { OrigenEjemplo } from '../../../common/enums/origen-ejemplo.enum';
 
-/**
- * Ejemplo para reentrenar el clasificador (sección 4.4). Solo etiquetas
- * confirmadas por una persona: reentrenar con la propia salida lo degrada.
- */
+/** Ejemplo para reentrenar el clasificador; solo etiquetas confirmadas por una persona. */
 @Entity('training_examples')
 @Index(['source', 'createdAt'])
 export class TrainingExample {
   @PrimaryGeneratedColumn('uuid')
   id: string;
 
-  /** Features del documento. No se guarda el texto del libro (sección 4.6). */
+  /** Features del documento; el texto del libro no se guarda. */
   @Column({ type: 'jsonb' })
   features: Record<string, number>;
 
