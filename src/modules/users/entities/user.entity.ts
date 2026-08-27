@@ -20,8 +20,8 @@ export class User {
   email: string;
 
   /** `select: false` para que no salga por accidente en un `find()`. */
-  @Column({ select: false })
-  passwordHash: string;
+  @Column({ type: 'varchar', nullable: true, select: false })
+  passwordHash: string | null;
 
   @Column()
   name: string;

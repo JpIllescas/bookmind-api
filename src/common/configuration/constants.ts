@@ -4,9 +4,9 @@ import { join } from 'path';
 
 import { ProveedorLlm } from '../enums/llm-provider.enum';
 
-// El .env está en la raíz del monorepo; se cae al directorio actual si no existe.
-config({ path: join(__dirname, '..', '..', '..', '..', '.env') });
-config();
+// El backend tiene su propio .env; mantener el fallback permite ejecutar desde su raíz.
+config({ path: join(__dirname, '..', '..', '..', '.env') });
+config({ path: join(process.cwd(), '.env') });
 
 const configService = new ConfigService();
 
@@ -21,7 +21,10 @@ function validarProveedorLlm(valor: string | undefined): ProveedorLlm {
     );
   }
 
-  if (proveedor === ProveedorLlm.Gemini && !configService.get('GEMINI_API_KEY')) {
+  if (
+    proveedor === ProveedorLlm.Gemini &&
+    !configService.get('GEMINI_API_KEY')
+  ) {
     throw new Error(
       'LLM_PROVIDER=gemini pero GEMINI_API_KEY está vacía. Consíguela en ' +
         'https://aistudio.google.com/apikey, o usa LLM_PROVIDER=mock mientras tanto.',
@@ -46,6 +49,13 @@ export const CONSTANTS = {
   JWT_ALGORITHM: configService.getOrThrow<string>('JWT_ALGORITHM'),
   JWT_EXPIRE: configService.getOrThrow<string>('JWT_EXPIRE'),
 
+  // OAuth de Google. Vacío deshabilita el endpoint hasta configurarlo.
+  GOOGLE_CLIENT_ID: configService.get<string>('GOOGLE_CLIENT_ID') ?? '',
+  GOOGLE_SECRET_ID: configService.get<string>('GOOGLE_SECRET_ID') ?? '',
+  GOOGLE_REDIRECT_URI:
+    configService.get<string>('GOOGLE_REDIRECT_URI') ??
+    'http://localhost:3000/api/auth/google/callback',
+
   // Base de datos
   DB_HOST: configService.getOrThrow<string>('DB_HOST'),
   DB_PORT: Number(configService.getOrThrow('DB_PORT')),
@@ -57,7 +67,7 @@ export const CONSTANTS = {
   // Motor conversacional (pieza 1)
   LLM_PROVIDER: validarProveedorLlm(configService.get<string>('LLM_PROVIDER')),
   GEMINI_API_KEY: configService.get<string>('GEMINI_API_KEY') ?? '',
-  GEMINI_MODEL: configService.get<string>('GEMINI_MODEL') ?? 'gemini-3.6-flash',
+  GEMINI_MODEL: configService.get<string>('GEMINI_MODEL') ?? 'gemini-2.5-flash',
   GEMINI_CONTEXT_CACHING:
     (configService.get<string>('GEMINI_CONTEXT_CACHING') ?? 'false') === 'true',
   OLLAMA_BASE_URL:
@@ -68,7 +78,8 @@ export const CONSTANTS = {
 
   // Verificador de anclaje (pieza 2)
   EMBEDDING_MODEL:
-    configService.get<string>('EMBEDDING_MODEL') ?? 'Xenova/multilingual-e5-small',
+    configService.get<string>('EMBEDDING_MODEL') ??
+    'Xenova/multilingual-e5-small',
   GROUNDING_THRESHOLD: Number(
     configService.get<string>('GROUNDING_THRESHOLD') ?? '0.72',
   ),
