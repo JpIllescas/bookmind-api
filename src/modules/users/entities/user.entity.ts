@@ -9,6 +9,7 @@ import {
 
 import { ChatMessage } from '../../chat/entities/chat-message.entity';
 import { Document } from '../../documents/entities/document.entity';
+import { PreferenciasEstudio } from '../../../common/enums/preferencias-estudio.enum';
 
 @Entity('users')
 export class User {
@@ -25,6 +26,9 @@ export class User {
 
   @Column()
   name: string;
+
+  @Column({ type: 'jsonb', nullable: true, default: null })
+  preferences: PreferenciasEstudio | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

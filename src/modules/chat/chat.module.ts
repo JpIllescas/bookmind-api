@@ -5,6 +5,7 @@ import { CONSTANTS } from '../../common/configuration/constants';
 import { ProveedorLlm } from '../../common/enums/llm-provider.enum';
 import { AnclajeModule } from '../anclaje/anclaje.module';
 import { DocumentsModule } from '../documents/documents.module';
+import { UsersModule } from '../users/users.module';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { ChatMessage } from './entities/chat-message.entity';
@@ -40,8 +41,10 @@ const proveedorLlm: Provider = {
     TypeOrmModule.forFeature([ChatMessage]),
     DocumentsModule,
     AnclajeModule,
+    UsersModule,
   ],
   controllers: [ChatController],
   providers: [ChatService, PromptService, proveedorLlm],
+  exports: [LLM_PROVIDER],
 })
 export class ChatModule {}

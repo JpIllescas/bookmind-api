@@ -69,6 +69,8 @@ export class DocumentsService {
       classifierFeatures: clasificacion?.featureImportance ?? null,
       tintColor: this.elegirTinte(clasificacion?.materia ?? null),
       progress: 0,
+      processingStatus: 'ready',
+      processingError: null,
     });
 
     const guardado = await this.documentos.save(documento);
@@ -87,6 +89,44 @@ export class DocumentsService {
     }
 
     return guardado;
+  }
+
+  /** Persiste la solicitud y deja el trabajo pesado fuera del request. */
+  async encolar(userId: string, archivo: Express.Multer.File): Promise<Document> {
+    const tipo = this.detectarTipo(archivo);
+    const documento = await this.documentos.save(this.documentos.create({
+      userId, title: this.titulaDesdeNombre(archivo.originalname), author: null,
+      type: tipo, pages: 0, extractedText: '', docEmbedding: [], materia: null,
+      nivel: null, classifierConfidence: null, classifierFeatures: null,
+      tintColor: this.elegirTinte(null), progress: 0,
+      processingStatus: 'pending', processingError: null,
+    }));
+
+    // The buffer is held only for the lifetime of this in-process job; no R2 is used.
+    setImmediate(() => void this.procesarEnSegundoPlano(documento, archivo.buffer));
+    return documento;
+  }
+
+  private async procesarEnSegundoPlano(documento: Document, buffer: Buffer): Promise<void> {
+    await this.documentos.update(documento.id, { processingStatus: 'processing' });
+    try {
+      const { paginas, textoCompleto, totalPaginas } = await this.extraccion.extraer(buffer, documento.type);
+      const clasificacion = await this.ml.clasificar(textoCompleto.slice(0, CARACTERES_PARA_CLASIFICAR));
+      await this.documentos.update(documento.id, {
+        pages: totalPaginas, extractedText: textoCompleto,
+        materia: clasificacion?.materia ?? null, nivel: clasificacion?.nivel ?? null,
+        classifierConfidence: clasificacion?.confidence ?? null,
+        classifierFeatures: clasificacion?.featureImportance ?? undefined,
+        tintColor: this.elegirTinte(clasificacion?.materia ?? null), processingStatus: 'ready',
+      });
+      const huella = await this.anclaje.indexar(documento.id, paginas);
+      if (huella.length > 0) await this.documentos.update(documento.id, { docEmbedding: huella });
+    } catch (error) {
+      this.logger.error(`Falló el procesamiento de ${documento.id}: ${String(error)}`);
+      await this.documentos.update(documento.id, {
+        processingStatus: 'failed', processingError: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   async listar(userId: string) {
@@ -143,6 +183,8 @@ export class DocumentsService {
       // Etiqueta lista para la tarjeta.
       etiqueta: etiquetaLegible(materia, documento.nivel),
       classifierConfidence: documento.classifierConfidence,
+      processingStatus: documento.processingStatus,
+      processingError: documento.processingError,
       // Los chips del chat dependen de la materia.
       accionesRapidas: ACCIONES_POR_MATERIA[materia ?? Materia.Otro],
     };

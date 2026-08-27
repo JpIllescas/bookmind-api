@@ -79,6 +79,12 @@ export class Document {
   @Column({ default: 0 })
   progress: number;
 
+  @Column({ name: 'processing_status', default: 'pending' })
+  processingStatus: 'pending' | 'processing' | 'ready' | 'failed';
+
+  @Column({ name: 'processing_error', type: 'text', nullable: true })
+  processingError: string | null;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

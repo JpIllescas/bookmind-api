@@ -12,6 +12,9 @@ import { DocumentsModule } from './modules/documents/documents.module';
 import { HealthModule } from './modules/health/health.module';
 import { MlModule } from './modules/ml/ml.module';
 import { UsersModule } from './modules/users/users.module';
+import { StudyModule } from './modules/study/study.module';
+import { ProgressModule } from './modules/progress/progress.module';
+import { ContentModule } from './modules/content/content.module';
 
 @Module({
   imports: [
@@ -29,6 +32,9 @@ import { UsersModule } from './modules/users/users.module';
     DocumentsModule,
     ChatModule,
     HealthModule,
+    StudyModule,
+    ProgressModule,
+    ContentModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],
 })

@@ -31,13 +31,18 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(carga: JwtPayload): Promise<AuthUser> {
     const usuario = await this.usuarios.findOne({
       where: { id: carga.sub },
-      select: { id: true, email: true, name: true },
+      select: { id: true, email: true, name: true, preferences: true },
     });
 
     if (!usuario) {
       throw new UnauthorizedException('La sesión ya no es válida.');
     }
 
-    return usuario;
+    return {
+      id: usuario.id,
+      email: usuario.email,
+      name: usuario.name,
+      preferenceCompleted: usuario.preferences != null,
+    };
   }
 }

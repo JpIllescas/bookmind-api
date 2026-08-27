@@ -12,6 +12,7 @@ import { ChatMessage } from './entities/chat-message.entity';
 import { LLM_PROVIDER } from './providers/llm-provider.interface';
 import type { LlmProvider } from './providers/llm-provider.interface';
 import { PromptService } from './services/prompt.service';
+import { UsersService } from '../users/users.service';
 
 const MAXIMO_ZERO_RAG = 500_000;
 
@@ -38,6 +39,7 @@ export class ChatService {
     private readonly documentos: DocumentsService,
     private readonly anclaje: AnclajeService,
     private readonly prompts: PromptService,
+    private readonly usuarios: UsersService,
   ) {}
 
   async responder(
@@ -47,6 +49,7 @@ export class ChatService {
   ): Promise<RespuestaChat> {
 
     const documento = await this.documentos.obtenerConTexto(userId, documentId);
+    const preferencias = await this.usuarios.obtenerPreferencias(userId);
 
     const { contenido, esParcial } = await this.armarContexto(
       documentId,
@@ -60,6 +63,7 @@ export class ChatService {
       nivel: documento.nivel,
       contenido,
       esParcial,
+      preferencias,
     });
 
     const historial = await this.historialReciente(documentId);

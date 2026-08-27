@@ -8,7 +8,6 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 
-import { CONSTANTS } from '../configuration/constants';
 
 @Catch()
 export class AllExceptionsFilter implements ExceptionFilter {
@@ -24,32 +23,17 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? exception.getStatus()
         : HttpStatus.INTERNAL_SERVER_ERROR;
 
-    let message: string | object =
-      exception instanceof HttpException
-        ? exception.getResponse()
-        : 'Error interno del servidor';
-
     // Código de error del driver de Postgres o de Multer, si el error lo trae.
     const code = (exception as { code?: string } | null)?.code;
 
     // 23505: violación de índice único. Hoy el único es el correo.
     if (code === '23505') {
       status = HttpStatus.CONFLICT;
-      message = {
-        message: 'Ya existe una cuenta con este correo.',
-        error: 'Conflict',
-      };
     }
 
     // Archivo más grande que el límite de Multer.
     if (code === 'LIMIT_FILE_SIZE') {
       status = HttpStatus.PAYLOAD_TOO_LARGE;
-      message = {
-        message:
-          `El archivo excede el tamaño máximo permitido ` +
-          `(${CONSTANTS.MAX_FILE_SIZE_MB} MB).`,
-        error: 'Payload Too Large',
-      };
     }
 
     // Los 4xx son entrada del cliente y no ensucian el log.
@@ -60,14 +44,36 @@ export class AllExceptionsFilter implements ExceptionFilter {
       );
     }
 
+    // Nunca se devuelven rutas, stacks, SQL ni mensajes del driver al cliente.
+    // El detalle queda únicamente en los logs internos del backend.
     response.status(status).json({
       statusCode: status,
-      timestamp: new Date().toISOString(),
-      path: request.url,
-      message:
-        typeof message === 'string'
-          ? message
-          : ((message as { message?: string }).message ?? message),
+      message: this.mensajePublico(status),
     });
+  }
+
+  private mensajePublico(status: number): string {
+    switch (status) {
+      case HttpStatus.BAD_REQUEST:
+        return 'La solicitud no es válida.';
+      case HttpStatus.UNAUTHORIZED:
+        return 'No se pudo autenticar la solicitud.';
+      case HttpStatus.FORBIDDEN:
+        return 'No tienes permiso para realizar esta acción.';
+      case HttpStatus.NOT_FOUND:
+        return 'No se encontró el recurso solicitado.';
+      case HttpStatus.CONFLICT:
+        return 'No se pudo completar la operación.';
+      case HttpStatus.PAYLOAD_TOO_LARGE:
+        return 'El archivo o la solicitud excede el límite permitido.';
+      case HttpStatus.TOO_MANY_REQUESTS:
+        return 'Demasiadas solicitudes. Intenta más tarde.';
+      case HttpStatus.SERVICE_UNAVAILABLE:
+        return 'El servicio no está disponible en este momento.';
+      default:
+        return status >= HttpStatus.INTERNAL_SERVER_ERROR
+          ? 'Ocurrió un error interno. Intenta más tarde.'
+          : 'No se pudo completar la solicitud.';
+    }
   }
 }

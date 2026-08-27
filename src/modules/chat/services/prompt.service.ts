@@ -2,6 +2,7 @@ import { Injectable } from '@nestjs/common';
 
 import { Materia } from '../../../common/enums/materia.enum';
 import { Nivel } from '../../../common/enums/nivel.enum';
+import { PreferenciasEstudio } from '../../../common/enums/preferencias-estudio.enum';
 import {
   INSTRUCCION_POR_NIVEL,
   MATERIA_LEGIBLE,
@@ -14,6 +15,7 @@ export interface ContextoLibro {
   nivel: Nivel | null;
   contenido: string;
   esParcial: boolean;
+  preferencias: PreferenciasEstudio | null;
 }
 
 /** Registro para documentos que no son material escolar reconocido. */
@@ -46,7 +48,10 @@ export class PromptService {
     return `Eres ${quien}.
 Trabajas EXCLUSIVAMENTE sobre ${materia}, titulado "${libro.titulo}".
 
-Reglas:
+ Preferencias del estudiante:
+ ${this.instruccionPreferencias(libro.preferencias)}
+
+ Reglas:
 1. Responde SOLO con base en el contenido del libro. Si algo no está en el libro,
    dilo explícitamente: "Eso no aparece en este libro." No inventes.
 2. Cita la sección o página cuando sea posible.
@@ -62,6 +67,39 @@ ${aviso}
 --- INICIO DEL LIBRO ---
 ${libro.contenido}
 --- FIN DEL LIBRO ---`;
+  }
+
+  private instruccionPreferencias(preferencias: PreferenciasEstudio | null): string {
+    if (!preferencias) return 'No hay preferencias registradas; usa un enfoque equilibrado y variado.';
+
+    const estilos: Record<string, string> = {
+      visual: 'usa esquemas, tablas, relaciones y listas visuales',
+      practico: 'prioriza ejemplos resueltos, ejercicios y aplicación paso a paso',
+      lectura: 'organiza la explicación en textos breves, definiciones y resúmenes',
+      mixto: 'combina explicaciones, ejemplos, esquemas y preguntas de práctica',
+    };
+    const duraciones: Record<string, string> = {
+      corta: 'diseña sesiones de 15 a 25 minutos',
+      media: 'diseña sesiones de 25 a 45 minutos',
+      larga: 'diseña sesiones de 45 a 60 minutos',
+    };
+    const objetivos: Record<string, string> = {
+      comprender: 'enfoca el plan en comprender conceptos y conexiones',
+      memorizar: 'incluye recuerdo activo y repasos espaciados',
+      examen: 'prioriza temas clave, práctica tipo examen y detección de errores',
+      repasar: 'prioriza síntesis, preguntas rápidas y recuperación de conocimientos',
+    };
+    const ritmos: Record<string, string> = {
+      tranquilo: 'avanza con poca carga nueva y repasos frecuentes',
+      equilibrado: 'mantén un equilibrio entre contenido nuevo y práctica',
+      intensivo: 'cubre más contenido por sesión sin sacrificar comprobaciones',
+    };
+
+    return [
+      estilos[preferencias.estilo], duraciones[preferencias.duracion],
+      objetivos[preferencias.objetivo], ritmos[preferencias.ritmo],
+      'estructura las sesiones del plan de estudio con estos criterios',
+    ].join('; ') + '.';
   }
 
   private registro(esEscolar: boolean, nivel: Nivel | null): string {

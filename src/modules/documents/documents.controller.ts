@@ -38,7 +38,7 @@ export class DocumentsController {
       );
     }
 
-    const documento = await this.documentos.subir(usuario.id, archivo);
+    const documento = await this.documentos.encolar(usuario.id, archivo);
 
     return this.documentos.comoResumen(documento);
   }

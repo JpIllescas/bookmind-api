@@ -58,6 +58,7 @@ describe('AuthService', () => {
         email: 'a@b.com',
         password: 'contrasena123',
         name: 'Ana',
+        preferences: null,
       });
 
       const guardado = (usuarios.create as jest.Mock).mock.calls[0][0];
@@ -134,7 +135,9 @@ describe('AuthService', () => {
       });
 
       expect(respuesta.token).toBe('token-de-prueba');
-      expect(respuesta.user).toEqual({ id: 'id-1', email: 'a@b.com', name: 'Ana' });
+      expect(respuesta.user).toEqual({
+        id: 'id-1', email: 'a@b.com', name: 'Ana', preferenceCompleted: false,
+      });
       // La respuesta no debe filtrar el hash.
       expect(JSON.stringify(respuesta)).not.toContain('$2');
     });
