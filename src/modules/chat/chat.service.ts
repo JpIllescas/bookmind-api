@@ -11,12 +11,21 @@ import { DocumentsService } from '../documents/documents.service';
 import { ChatMessage } from './entities/chat-message.entity';
 import { LLM_PROVIDER } from './providers/llm-provider.interface';
 import type { LlmProvider } from './providers/llm-provider.interface';
+import { MaterialPedido, IntencionService } from './services/intencion.service';
 import { PromptService } from './services/prompt.service';
 import { UsersService } from '../users/users.service';
 
-const MAXIMO_ZERO_RAG = 500_000;
+// Por encima de esto se recupera por fragmentos: el libro entero encarece cada turno.
+const MAXIMO_ZERO_RAG = 40_000;
 
 const TURNOS_DE_HISTORIAL = 8;
+
+/** Entradilla del material, que se dibuja justo debajo en el mismo hilo. */
+const AVISO_MATERIAL: Record<MaterialPedido, string> = {
+  [TipoBloque.Summary]: 'Aquí tienes el resumen:',
+  [TipoBloque.Flashcards]: 'Aquí tienes tus flashcards:',
+  [TipoBloque.Quiz]: 'Aquí tienes tu quiz:',
+};
 
 export interface RespuestaChat {
   id: string;
@@ -39,6 +48,7 @@ export class ChatService {
     private readonly documentos: DocumentsService,
     private readonly anclaje: AnclajeService,
     private readonly prompts: PromptService,
+    private readonly intencion: IntencionService,
     private readonly usuarios: UsersService,
   ) {}
 
@@ -47,6 +57,11 @@ export class ChatService {
     documentId: string,
     mensaje: string,
   ): Promise<RespuestaChat> {
+    const materiales = this.intencion.detectar(mensaje);
+
+    if (materiales.length > 0) {
+      return this.pedirMaterial(userId, documentId, mensaje, materiales);
+    }
 
     const documento = await this.documentos.obtenerConTexto(userId, documentId);
     const preferencias = await this.usuarios.obtenerPreferencias(userId);
@@ -110,6 +125,54 @@ export class ChatService {
       citations: anclada.citations,
       flaggedClaims: anclada.flaggedClaims,
       contextoParcial: esParcial,
+    };
+  }
+
+  /**
+   * El material lo genera el frontend con el endpoint de siempre: aquí no se
+   * llama al modelo, así que reconocer la intención no gasta cuota.
+   */
+  private async pedirMaterial(
+    userId: string,
+    documentId: string,
+    mensaje: string,
+    tipos: MaterialPedido[],
+  ): Promise<RespuestaChat> {
+    const [tipo, ...resto] = tipos;
+
+    await this.documentos.obtener(userId, documentId);
+
+    await this.mensajes.save(
+      this.mensajes.create({
+        documentId,
+        userId,
+        role: RolMensaje.User,
+        content: mensaje,
+        blockType: TipoBloque.Text,
+      }),
+    );
+
+    const guardada = await this.mensajes.save(
+      this.mensajes.create({
+        documentId,
+        userId,
+        role: RolMensaje.Assistant,
+        content:
+          AVISO_MATERIAL[tipo] +
+          // Solo se prepara uno: cada material es una llamada al modelo.
+          (resto.length > 0 ? ' Lo demás lo pides con los botones de abajo.' : ''),
+        blockType: tipo,
+      }),
+    );
+
+    return {
+      id: guardada.id,
+      response: guardada.content,
+      blockType: tipo,
+      groundingScore: null,
+      citations: [],
+      flaggedClaims: [],
+      contextoParcial: false,
     };
   }
 

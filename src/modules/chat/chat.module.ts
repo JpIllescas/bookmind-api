@@ -6,23 +6,27 @@ import { ProveedorLlm } from '../../common/enums/llm-provider.enum';
 import { AnclajeModule } from '../anclaje/anclaje.module';
 import { DocumentsModule } from '../documents/documents.module';
 import { UsersModule } from '../users/users.module';
+import { AsistenteController } from './asistente.controller';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { ChatMessage } from './entities/chat-message.entity';
 import { GeminiProvider } from './providers/gemini.provider';
 import { LLM_PROVIDER, LlmProvider } from './providers/llm-provider.interface';
 import { MockProvider } from './providers/mock.provider';
+import { IntencionService } from './services/intencion.service';
+import { MetricasLlmService } from './services/metricas-llm.service';
 import { PromptService } from './services/prompt.service';
 
 const proveedorLlm: Provider = {
   provide: LLM_PROVIDER,
-  useFactory: (): LlmProvider => {
+  inject: [MetricasLlmService],
+  useFactory: (metricas: MetricasLlmService): LlmProvider => {
     const logger = new Logger('LlmProvider');
 
     switch (CONSTANTS.LLM_PROVIDER) {
       case ProveedorLlm.Gemini:
         logger.log(`Motor conversacional: ${CONSTANTS.GEMINI_MODEL}`);
-        return new GeminiProvider();
+        return new GeminiProvider(metricas);
 
       case ProveedorLlm.Ollama:
         throw new Error(
@@ -43,8 +47,14 @@ const proveedorLlm: Provider = {
     AnclajeModule,
     UsersModule,
   ],
-  controllers: [ChatController],
-  providers: [ChatService, PromptService, proveedorLlm],
-  exports: [LLM_PROVIDER],
+  controllers: [ChatController, AsistenteController],
+  providers: [
+    ChatService,
+    PromptService,
+    IntencionService,
+    MetricasLlmService,
+    proveedorLlm,
+  ],
+  exports: [LLM_PROVIDER, PromptService],
 })
 export class ChatModule {}

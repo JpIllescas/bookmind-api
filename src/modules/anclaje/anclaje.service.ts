@@ -146,11 +146,50 @@ export class AnclajeService {
       .slice(0, cuantos);
   }
 
+  /** Busca en todos los libros del estudiante, no solo en el que tiene abierto. */
+  async recuperarEnBiblioteca(userId: string, pregunta: string, cuantos = 10) {
+    const [vector] = await this.embeddings.embeberConsultas([pregunta]);
+
+    const fragmentos = await this.fragmentos
+      .createQueryBuilder('fragmento')
+      .innerJoin('fragmento.document', 'documento')
+      .select([
+        'fragmento.documentId AS "documentId"',
+        'fragmento.pagina AS "pagina"',
+        'fragmento.texto AS "texto"',
+        'fragmento.embedding AS "embedding"',
+        'documento.title AS "titulo"',
+        'documento.tintColor AS "tinte"',
+      ])
+      .where('documento.user_id = :userId', { userId })
+      .getRawMany<{
+        documentId: string;
+        pagina: number;
+        texto: string;
+        embedding: number[];
+        titulo: string;
+        tinte: string;
+      }>();
+
+    return fragmentos
+      .map((fragmento) => ({
+        documentId: fragmento.documentId,
+        titulo: fragmento.titulo,
+        tinte: fragmento.tinte,
+        pagina: fragmento.pagina,
+        texto: fragmento.texto,
+        score: EmbeddingsService.coseno(vector, fragmento.embedding),
+      }))
+      .sort((a, b) => b.score - a.score)
+      .slice(0, cuantos);
+  }
+
   /** Parte la respuesta en afirmaciones verificables, una por oración. */
   private partirEnAfirmaciones(respuesta: string): string[] {
     return this.limpiarMarkdown(respuesta)
+      // Cada línea suelta y cada oración se comprueban por separado.
       // Exigir mayúscula después del punto evita partir "(págs. 9-20)".
-      .split(/(?<=[.!?])\s+(?=[A-ZÁÉÍÓÚÑ¿¡«"])/)
+      .split(/\n+|(?<=[.!?])[^\S\n]+(?=[A-ZÁÉÍÓÚÑ¿¡«"])/)
       .map((frase) => frase.trim())
       // Viñetas y encabezados sueltos ensuciarían el promedio.
       .filter(
@@ -162,6 +201,8 @@ export class AnclajeService {
   /** Quita el Markdown: sus símbolos no están en el libro y bajan la similitud. */
   private limpiarMarkdown(texto: string): string {
     return texto
+      // Las vallas ``` son estructura; lo de dentro del mapa sí son afirmaciones.
+      .replace(/^\s*```[a-záéíóúñ]*\s*$/gim, ' ')
       // Encabezados y separadores: son estructura, no afirmaciones.
       .replace(/^\s*#{1,6}\s+/gm, '')
       .replace(/^\s*([-*_]\s*){3,}$/gm, ' ')
@@ -174,7 +215,9 @@ export class AnclajeService {
       .replace(/`([^`]+)`/g, '$1')
       // Enlaces: se queda el texto, no la URL.
       .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')
-      .replace(/\s+/g, ' ')
+      // Solo el espacio horizontal: el salto de línea separa afirmaciones.
+      .replace(/[^\S\n]+/g, ' ')
+      .replace(/\n{2,}/g, '\n')
       .trim();
   }
 }

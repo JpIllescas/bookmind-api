@@ -9,17 +9,25 @@ import { TipoDocumento } from '../../common/enums/tipo-documento.enum';
 import { MlService } from '../ml/ml.service';
 import { Document } from './entities/document.entity';
 import { DocumentsService } from './documents.service';
+import { AlmacenamientoService } from './services/almacenamiento.service';
 import { ExtraccionService } from './services/extraccion.service';
 
 function crearRepositorioFalso() {
   return {
     find: jest.fn<Promise<Document[]>, [unknown]>(),
     findOne: jest.fn<Promise<Document | null>, [unknown]>(),
+    update: jest.fn(),
     create: jest.fn((datos: Partial<Document>) => datos as Document),
     save: jest.fn(
       async (documento: Partial<Document>) => ({ id: 'doc-1', ...documento }) as Document,
     ),
   };
+}
+
+/** El procesamiento arranca fuera del request; esto espera a que termine. */
+async function esperarProcesamiento(): Promise<void> {
+  await new Promise((listo) => setImmediate(listo));
+  await new Promise((listo) => setImmediate(listo));
 }
 
 describe('DocumentsService', () => {
@@ -28,10 +36,17 @@ describe('DocumentsService', () => {
   let extraccion: { extraer: jest.Mock };
   let ml: { clasificar: jest.Mock };
   let anclaje: { indexar: jest.Mock };
+  let almacenamiento: {
+    guardarDefinitivo: jest.Mock;
+    leer: jest.Mock;
+    eliminar: jest.Mock;
+    prepararCarpetas: jest.Mock;
+  };
 
   const archivoFalso = {
     originalname: 'Ciencias_Naturales_6to.pdf',
-    buffer: Buffer.from('%PDF-falso'),
+    path: '/tmp/subidas/abc.subida',
+    size: 1024,
   } as Express.Multer.File;
 
   beforeEach(async () => {
@@ -41,10 +56,17 @@ describe('DocumentsService', () => {
         paginas: [{ pagina: 1, texto: 'contenido' }],
         textoCompleto: 'La célula es la unidad básica de los seres vivos.',
         totalPaginas: 210,
+        capaTexto: 'ok',
       }),
     };
-    ml = { clasificar: jest.fn() };
+    ml = { clasificar: jest.fn().mockResolvedValue(null) };
     anclaje = { indexar: jest.fn().mockResolvedValue([0.1, 0.2, 0.3]) };
+    almacenamiento = {
+      guardarDefinitivo: jest.fn().mockResolvedValue('usuario-a/doc-1.pdf'),
+      leer: jest.fn().mockResolvedValue(Buffer.from('%PDF-falso')),
+      eliminar: jest.fn().mockResolvedValue(undefined),
+      prepararCarpetas: jest.fn().mockResolvedValue(undefined),
+    };
 
     const modulo = await Test.createTestingModule({
       providers: [
@@ -53,6 +75,7 @@ describe('DocumentsService', () => {
         { provide: ExtraccionService, useValue: extraccion },
         { provide: MlService, useValue: ml },
         { provide: AnclajeService, useValue: anclaje },
+        { provide: AlmacenamientoService, useValue: almacenamiento },
       ],
     }).compile();
 
@@ -83,7 +106,32 @@ describe('DocumentsService', () => {
     });
   });
 
-  describe('subir', () => {
+  describe('encolar', () => {
+    it('responde en cuanto guarda el archivo, sin esperar la extracción', async () => {
+      const documento = await servicio.encolar('usuario-a', archivoFalso);
+
+      expect(documento.processingStatus).toBe('pending');
+      expect(extraccion.extraer).not.toHaveBeenCalled();
+
+      await esperarProcesamiento();
+    });
+
+    it('conserva el archivo original para que el visor pueda abrirlo', async () => {
+      await servicio.encolar('usuario-a', archivoFalso);
+
+      expect(almacenamiento.guardarDefinitivo).toHaveBeenCalledWith(
+        archivoFalso.path,
+        'usuario-a',
+        'doc-1',
+        TipoDocumento.PDF,
+      );
+      expect(documentos.update).toHaveBeenCalledWith('doc-1', {
+        storagePath: 'usuario-a/doc-1.pdf',
+      });
+
+      await esperarProcesamiento();
+    });
+
     it('guarda la materia y el nivel que devuelve el clasificador', async () => {
       ml.clasificar.mockResolvedValue({
         materia: Materia.CienciasNaturales,
@@ -92,49 +140,74 @@ describe('DocumentsService', () => {
         featureImportance: [{ feature: 'palabra:célula', contribucion: 1.2, valor: 0.4 }],
       });
 
-      await servicio.subir('usuario-a', archivoFalso);
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
 
-      expect(documentos.create).toHaveBeenCalledWith(
+      expect(documentos.update).toHaveBeenCalledWith(
+        'doc-1',
         expect.objectContaining({
-          userId: 'usuario-a',
-          type: TipoDocumento.PDF,
           pages: 210,
           materia: Materia.CienciasNaturales,
           nivel: Nivel.PrimariaAlta,
           classifierConfidence: 0.91,
+          processingStatus: 'ready',
         }),
       );
     });
 
-    it('guarda el documento aunque el clasificador esté caído', async () => {
+    it('deja el documento listo aunque el clasificador esté caído', async () => {
       ml.clasificar.mockResolvedValue(null);
 
-      const documento = await servicio.subir('usuario-a', archivoFalso);
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
 
-      expect(documento).toBeDefined();
-      expect(documentos.create).toHaveBeenCalledWith(
-        expect.objectContaining({ materia: null, nivel: null }),
+      expect(documentos.update).toHaveBeenCalledWith(
+        'doc-1',
+        expect.objectContaining({
+          materia: null,
+          nivel: null,
+          processingStatus: 'ready',
+        }),
       );
     });
 
-    it('deriva un título legible del nombre del archivo', async () => {
-      ml.clasificar.mockResolvedValue(null);
+    it('marca el escaneo como sin_texto en vez de rechazarlo', async () => {
+      extraccion.extraer.mockResolvedValue({
+        paginas: [{ pagina: 1, texto: '' }],
+        textoCompleto: '',
+        totalPaginas: 40,
+        capaTexto: 'sin_texto',
+      });
 
-      await servicio.subir('usuario-a', archivoFalso);
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
+
+      expect(documentos.update).toHaveBeenCalledWith(
+        'doc-1',
+        expect.objectContaining({ textLayer: 'sin_texto', processingStatus: 'ready' }),
+      );
+      // Sin texto no hay nada que clasificar ni que indexar para el anclaje.
+      expect(ml.clasificar).not.toHaveBeenCalled();
+      expect(anclaje.indexar).not.toHaveBeenCalled();
+    });
+
+    it('deriva un título legible del nombre del archivo', async () => {
+      await servicio.encolar('usuario-a', archivoFalso);
 
       expect(documentos.create).toHaveBeenCalledWith(
         expect.objectContaining({ title: 'Ciencias Naturales 6to' }),
       );
+
+      await esperarProcesamiento();
     });
 
     it('repara los acentos del nombre del archivo', async () => {
-      ml.clasificar.mockResolvedValue(null);
       const nombreMalDecodificado = Buffer.from(
         'Agentes Autónomos.pdf',
         'utf8',
       ).toString('latin1');
 
-      await servicio.subir('usuario-a', {
+      await servicio.encolar('usuario-a', {
         ...archivoFalso,
         originalname: nombreMalDecodificado,
       } as Express.Multer.File);
@@ -142,28 +215,19 @@ describe('DocumentsService', () => {
       expect(documentos.create).toHaveBeenCalledWith(
         expect.objectContaining({ title: 'Agentes Autónomos' }),
       );
+
+      await esperarProcesamiento();
     });
 
-    it('no toca los nombres que ya están bien', async () => {
-      ml.clasificar.mockResolvedValue(null);
-
-      await servicio.subir('usuario-a', {
-        ...archivoFalso,
-        originalname: 'Ciencias_Naturales_6to.pdf',
-      } as Express.Multer.File);
-
-      expect(documentos.create).toHaveBeenCalledWith(
-        expect.objectContaining({ title: 'Ciencias Naturales 6to' }),
-      );
-    });
-
-    it('rechaza formatos que no sean PDF ni EPUB', async () => {
+    it('rechaza formatos que no sean PDF ni EPUB y borra lo subido', async () => {
       await expect(
-        servicio.subir('usuario-a', {
+        servicio.encolar('usuario-a', {
           ...archivoFalso,
           originalname: 'apuntes.docx',
         } as Express.Multer.File),
       ).rejects.toThrow(/PDF y EPUB/);
+
+      expect(almacenamiento.eliminar).toHaveBeenCalledWith(archivoFalso.path);
     });
 
     it('no manda el libro entero al clasificador', async () => {
@@ -171,13 +235,29 @@ describe('DocumentsService', () => {
         paginas: [],
         textoCompleto: 'a'.repeat(500_000),
         totalPaginas: 300,
+        capaTexto: 'ok',
       });
-      ml.clasificar.mockResolvedValue(null);
 
-      await servicio.subir('usuario-a', archivoFalso);
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
 
       const textoEnviado = ml.clasificar.mock.calls[0][0] as string;
       expect(textoEnviado.length).toBeLessThan(500_000);
+    });
+
+    it('marca el documento como fallido si la extracción revienta', async () => {
+      extraccion.extraer.mockRejectedValue(new Error('PDF corrupto'));
+
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
+
+      expect(documentos.update).toHaveBeenCalledWith(
+        'doc-1',
+        expect.objectContaining({
+          processingStatus: 'failed',
+          processingError: 'PDF corrupto',
+        }),
+      );
     });
   });
 
@@ -211,6 +291,17 @@ describe('DocumentsService', () => {
 
       // El clasificador no solo etiqueta: configura lo que ofrece la interfaz.
       expect(resumen.accionesRapidas).toContain('Explica este problema paso a paso');
+    });
+
+    it('avisa cuando el documento no tiene archivo que abrir', () => {
+      const resumen = servicio.comoResumen({
+        id: 'doc-1',
+        materia: null,
+        nivel: null,
+        storagePath: null,
+      } as Document);
+
+      expect(resumen.tieneArchivo).toBe(false);
     });
   });
 });

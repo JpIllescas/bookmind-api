@@ -53,6 +53,9 @@ async function bootstrap() {
     origin: CONSTANTS.FRONTEND_URL,
     methods: 'GET,HEAD,PATCH,POST,PUT,DELETE',
     credentials: true,
+    // Sin estas cabeceras el visor no puede pedir el PDF por trozos.
+    allowedHeaders: ['Authorization', 'Content-Type', 'Range'],
+    exposedHeaders: ['Accept-Ranges', 'Content-Range', 'Content-Length'],
   });
 
   // Cierre ordenado: ante SIGTERM/SIGINT cierra conexiones de BD y crons.

@@ -58,7 +58,6 @@ describe('AuthService', () => {
         email: 'a@b.com',
         password: 'contrasena123',
         name: 'Ana',
-        preferences: null,
       });
 
       const guardado = (usuarios.create as jest.Mock).mock.calls[0][0];

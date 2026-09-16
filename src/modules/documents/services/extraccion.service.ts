@@ -10,10 +10,14 @@ export interface PaginaExtraida {
   texto: string;
 }
 
+/** `sin_texto` es un escaneo: se puede mostrar, pero no alimenta al chat ni al clasificador. */
+export type CapaTexto = 'ok' | 'sin_texto';
+
 export interface ResultadoExtraccion {
   paginas: PaginaExtraida[];
   textoCompleto: string;
   totalPaginas: number;
+  capaTexto: CapaTexto;
 }
 
 /** Debajo de esto casi seguro es un escaneo, no un libro con texto. */
@@ -41,12 +45,11 @@ export class ExtraccionService {
       conTexto.map((p) => p.texto).join('\n\n'),
     );
 
-    this.verificarCalidad(paginas, textoCompleto);
-
     return {
       paginas,
       textoCompleto,
       totalPaginas: paginas.length,
+      capaTexto: this.evaluarCapaTexto(paginas, textoCompleto),
     };
   }
 
@@ -224,37 +227,35 @@ export class ExtraccionService {
       .trim();
   }
 
-  /** Falla al subir, no después: un escaneo produce un documento vacío. */
-  private verificarCalidad(
+  /** Decide si el texto sirve para estudiar; un escaneo se marca, no se rechaza. */
+  private evaluarCapaTexto(
     paginas: PaginaExtraida[],
     textoCompleto: string,
-  ): void {
-    const totalPalabras = textoCompleto.split(/\s+/).filter(Boolean).length;
-
+  ): CapaTexto {
+    // Sin páginas no hay nada que mostrar: el archivo está corrupto o no es lo que dice.
     if (paginas.length === 0) {
       throw new BadRequestException(
         'No se pudo leer ninguna página del archivo.',
       );
     }
 
+    const totalPalabras = textoCompleto.split(/\s+/).filter(Boolean).length;
+
     const casiVacias = paginas.filter(
       (p) => p.texto.split(/\s+/).filter(Boolean).length < MINIMO_PALABRAS_POR_PAGINA,
     ).length;
 
-    if (casiVacias / paginas.length > UMBRAL_PAGINAS_VACIAS) {
-      throw new BadRequestException(
-        `${casiVacias} de ${paginas.length} páginas no contienen texto. ` +
-          'El documento parece estar escaneado como imágenes. BookMind necesita ' +
-          'un archivo con texto seleccionable; prueba con una versión digital ' +
-          'del libro.',
+    const escaneado = casiVacias / paginas.length > UMBRAL_PAGINAS_VACIAS;
+
+    if (escaneado || totalPalabras < MINIMO_PALABRAS_TOTALES) {
+      this.logger.warn(
+        `Documento sin capa de texto: ${casiVacias} de ${paginas.length} ` +
+          `páginas vacías, ${totalPalabras} palabras en total.`,
       );
+
+      return 'sin_texto';
     }
 
-    if (totalPalabras < MINIMO_PALABRAS_TOTALES) {
-      throw new BadRequestException(
-        `Solo se extrajeron ${totalPalabras} palabras del documento. ` +
-          'Es demasiado poco para estudiar con él.',
-      );
-    }
+    return 'ok';
   }
 }

@@ -50,6 +50,18 @@ export class Document {
   @Column({ name: 'extracted_text', type: 'text', select: false })
   extractedText: string;
 
+  /** Ruta del archivo original dentro de UPLOAD_PATH; es lo que lee el visor. */
+  @Column({ name: 'storage_path', type: 'varchar', nullable: true })
+  storagePath: string | null;
+
+  // int y no bigint: MAX_FILE_SIZE_MB nunca se acerca a 2 GB y evita leerlo como string.
+  @Column({ name: 'file_size', type: 'int', nullable: true })
+  fileSize: number | null;
+
+  /** `sin_texto` marca un escaneo: se puede leer, pero no chatear con él. */
+  @Column({ name: 'text_layer', default: 'ok' })
+  textLayer: 'ok' | 'sin_texto';
+
   /** Embedding promedio: detecta libros que el usuario ya subió. */
   @Column({ name: 'doc_embedding', type: 'double precision', array: true, default: () => "'{}'" })
   docEmbedding: number[];

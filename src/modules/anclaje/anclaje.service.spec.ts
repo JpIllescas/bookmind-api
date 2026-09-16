@@ -50,6 +50,29 @@ describe('AnclajeService', () => {
     );
 
   describe('verificar', () => {
+    it('no verifica la valla del bloque mapa, sí lo que hay dentro', async () => {
+      indexado([EJE_X]);
+      embeddings.embeberConsultas.mockResolvedValue([EJE_Y]);
+
+      const respuesta = [
+        '```mapa',
+        'El principito',
+        '- Baobabs: hay que arrancarlos temprano del planeta (pág. 10)',
+        '```',
+      ].join('\n');
+
+      const r = await servicio.verificar('doc-1', respuesta);
+
+      const analizadas = embeddings.embeberConsultas.mock.calls[0][0] as string[];
+
+      expect(analizadas.some((frase) => frase.includes('```'))).toBe(false);
+      expect(analizadas.some((frase) => frase.startsWith('mapa'))).toBe(false);
+      expect(analizadas).toContain(
+        'Baobabs: hay que arrancarlos temprano del planeta (pág. 10)',
+      );
+      expect(r.groundingScore).not.toBeNull();
+    });
+
     it('marca como no anclada una afirmación que no se parece al libro', async () => {
       indexado([EJE_X]);
       embeddings.embeberConsultas.mockResolvedValue([EJE_Y]);
