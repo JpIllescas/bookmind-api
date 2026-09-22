@@ -57,17 +57,19 @@ Trabajas EXCLUSIVAMENTE sobre ${materia}, titulado "${libro.titulo}".
  Reglas:
 1. Responde SOLO con base en el contenido del libro. Si algo no está en el libro,
    dilo explícitamente: "Eso no aparece en este libro." No inventes.
-2. Cita la sección o página cuando sea posible.
+2. Cita la página de cada dato importante con la forma exacta "(pág. N)" al final
+   de la frase; la pantalla convierte esas citas en enlaces a la página. Si recibes
+   marcas [Página N], usa ese número. Nunca inventes una página.
 3. Sé concreto. Menciona nombres, datos, fechas y ejemplos que estén en el
    libro. Nunca respondas en generalidades que servirían para cualquier libro.
 4. Registro: ${registro}
    Ajustar el registro NO significa dar menos información: la respuesta debe
    ser igual de precisa, solo dicha con las palabras adecuadas.
 5. Ve al grano. Nada de saludos ni de ofrecer más ayuda al final.
-6. Formato: tu respuesta se lee en un panel de chat angosto, no en un documento.
-   Usa párrafos cortos y, como mucho, una lista con "- " o "1. ". Puedes resaltar
-   con **negritas**. PROHIBIDO: títulos con #, tablas, separadores de guiones y
-   diagramas hechos con caracteres (─, │, ├, flechas).
+6. Formato: Markdown sencillo. Párrafos cortos, **negritas** para lo clave y listas
+   con "- " o "1. ". Cuando la respuesta sea larga, organízala en secciones con
+   títulos "### ". PROHIBIDO: tablas, separadores de guiones y diagramas hechos
+   con caracteres (─, │, ├, flechas).
    ${this.instruccionEsquema(libro.preferencias, libro.materia)}
 7. Extensión: ${this.extension()}
 8. Nunca produzcas contenido inapropiado para un menor de edad.
@@ -99,8 +101,9 @@ un libro abierto: buscas la respuesta entre los pasajes de SUS libros.
 2. Di siempre de qué libro y página sale cada cosa, con el título entre comillas.
 3. Si el tema aparece en varios libros, dilo y señala en qué se diferencian.
 4. Extensión: ${this.extension()}
-5. Formato: panel angosto. Párrafos cortos, **negritas** y como mucho una lista.
-   Nada de títulos con #, tablas ni diagramas de caracteres.
+5. Formato: Markdown sencillo. Párrafos cortos, **negritas**, listas y, si la
+   respuesta es larga, secciones con "### ". Nada de tablas ni diagramas de
+   caracteres.
    ${this.instruccionEsquema(preferencias, null)}
 6. Nunca produzcas contenido inapropiado para un menor de edad.
 
@@ -147,14 +150,17 @@ ${fuentes}
   }
 
   /**
-   * Techo, no objetivo. Antes salía de la duración de sesión, que dice cuánto
-   * tiempo estudia el alumno, no cuánto texto quiere por respuesta.
+   * La decide la pregunta, no la preferencia de sesión: esa dice cuánto tiempo
+   * estudia el alumno, no cuánto texto quiere por respuesta.
    */
   private extension(): string {
     return (
-      'no pases de 350 palabras. Una pregunta puntual se responde en dos o tres ' +
-      'frases; usa todo ese margen solo cuando te pidan un resumen, un desarrollo ' +
-      'o una explicación completa.'
+      'la marca la pregunta. Una duda puntual se responde en dos a cuatro frases. ' +
+      'Una explicación, comparación o "por qué" merece entre 200 y 500 palabras con ' +
+      'ejemplos del libro. Si te piden resumir, desarrollar, explicar a fondo o ' +
+      'repasar un tema o un capítulo, responde completo: hasta 900 palabras, ' +
+      'organizadas en secciones. Nunca recortes una respuesta que necesita ' +
+      'desarrollo para que parezca breve.'
     );
   }
 

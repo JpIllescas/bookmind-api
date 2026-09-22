@@ -9,15 +9,16 @@ import { Repository } from 'typeorm';
 
 import { LLM_PROVIDER } from '../chat/providers/llm-provider.interface';
 import type { LlmProvider } from '../chat/providers/llm-provider.interface';
+import {
+  ContextoRepresentativo,
+  ContextoService,
+} from '../chat/services/contexto.service';
 import { PromptService } from '../chat/services/prompt.service';
 import { QuizAttempt } from '../content/entities/quiz-attempt.entity';
 import { DocumentsService } from '../documents/documents.service';
 import { UsersService } from '../users/users.service';
 import { CreateStudyPlanDto } from './dto/create-study-plan.dto';
 import { StudyPlan } from './entities/study-plan.entity';
-
-/** El mismo recorte que el chat y los materiales: el libro entero no cabe. */
-const CARACTERES_MAXIMOS = 40_000;
 
 const SESIONES = 7;
 
@@ -39,6 +40,7 @@ export class StudyService {
     private readonly documents: DocumentsService,
     private readonly users: UsersService,
     private readonly prompts: PromptService,
+    private readonly contexto: ContextoService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
   ) {}
 
@@ -63,11 +65,14 @@ export class StudyService {
     const preferencias = await this.users.obtenerPreferencias(userId);
     const aRepasar = await this.temasFallados(userId, documentId);
 
+    // Una muestra de todo el libro: el plan cubría solo las primeras páginas.
+    const contexto = await this.contexto.representativo(documentId, document.extractedText);
+
     const respuesta = await this.llm.responder({
       systemPrompt: this.prompt(
         this.prompts.instruccionPreferencias(preferencias),
         aRepasar,
-        document.extractedText,
+        contexto,
       ),
       historial: [],
       mensaje: 'Genera el plan de estudio.',
@@ -110,7 +115,11 @@ export class StudyService {
       .slice(0, MAXIMO_A_REPASAR);
   }
 
-  private prompt(criterios: string, aRepasar: string[], texto: string): string {
+  private prompt(
+    criterios: string,
+    aRepasar: string[],
+    contexto: ContextoRepresentativo,
+  ): string {
     // Sin esto el plan sale igual para quien domina el libro y para quien no.
     const refuerzo =
       aRepasar.length > 0
@@ -125,8 +134,9 @@ export class StudyService {
       '{"title":"...","tasks":[{"title":"...","description":"...","session":1}]}\n' +
       `${refuerzo}` +
       `Adapta el plan a estos criterios: ${criterios}\n` +
+      this.contexto.aviso(contexto.esParcial) +
       'Usa únicamente el contenido del libro:\n' +
-      texto.slice(0, CARACTERES_MAXIMOS)
+      contexto.contenido
     );
   }
 

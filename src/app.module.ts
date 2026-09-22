@@ -14,6 +14,7 @@ import { MlModule } from './modules/ml/ml.module';
 import { UsersModule } from './modules/users/users.module';
 import { StudyModule } from './modules/study/study.module';
 import { ProgressModule } from './modules/progress/progress.module';
+import { AprendizajeModule } from './modules/aprendizaje/aprendizaje.module';
 import { ContentModule } from './modules/content/content.module';
 
 @Module({
@@ -34,6 +35,7 @@ import { ContentModule } from './modules/content/content.module';
     HealthModule,
     StudyModule,
     ProgressModule,
+    AprendizajeModule,
     ContentModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: ThrottlerGuard }],

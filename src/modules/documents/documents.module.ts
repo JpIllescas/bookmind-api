@@ -9,11 +9,13 @@ import { randomUUID } from 'node:crypto';
 import { CONSTANTS } from '../../common/configuration/constants';
 import { AnclajeModule } from '../anclaje/anclaje.module';
 import { MlModule } from '../ml/ml.module';
+import { Chapter } from './entities/chapter.entity';
 import { DocumentChunk } from './entities/document-chunk.entity';
 import { Document } from './entities/document.entity';
 import { DocumentsController } from './documents.controller';
 import { DocumentsService } from './documents.service';
 import { AlmacenamientoService } from './services/almacenamiento.service';
+import { CapitulosService } from './services/capitulos.service';
 import { ExtraccionService } from './services/extraccion.service';
 
 const CARPETA_TEMPORAL = join(resolve(CONSTANTS.UPLOAD_PATH), 'tmp');
@@ -23,7 +25,7 @@ mkdirSync(CARPETA_TEMPORAL, { recursive: true });
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([Document, DocumentChunk]),
+    TypeOrmModule.forFeature([Document, DocumentChunk, Chapter]),
     MlModule,
     AnclajeModule,
 
@@ -42,7 +44,7 @@ mkdirSync(CARPETA_TEMPORAL, { recursive: true });
     }),
   ],
   controllers: [DocumentsController],
-  providers: [DocumentsService, ExtraccionService, AlmacenamientoService],
-  exports: [DocumentsService, ExtraccionService, AlmacenamientoService],
+  providers: [DocumentsService, ExtraccionService, AlmacenamientoService, CapitulosService],
+  exports: [DocumentsService, ExtraccionService, AlmacenamientoService, CapitulosService],
 })
 export class DocumentsModule {}

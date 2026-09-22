@@ -5,6 +5,7 @@ import { DocumentChunk } from '../documents/entities/document-chunk.entity';
 import { AnclajeService } from './anclaje.service';
 import { EmbeddingsService } from './services/embeddings.service';
 import { FragmentacionService } from './services/fragmentacion.service';
+import { MuestreoService } from './services/muestreo.service';
 
 const EJE_X = [1, 0, 0];
 const EJE_Y = [0, 1, 0];
@@ -33,6 +34,7 @@ describe('AnclajeService', () => {
         { provide: getRepositoryToken(DocumentChunk), useValue: fragmentos },
         { provide: EmbeddingsService, useValue: embeddings },
         FragmentacionService,
+        MuestreoService,
       ],
     }).compile();
 
@@ -213,6 +215,57 @@ describe('AnclajeService', () => {
 
       expect(huella).toEqual([]);
       expect(fragmentos.save).not.toHaveBeenCalled();
+    });
+  });
+
+  describe('anclarItems', () => {
+    it('devuelve null cuando el libro no tiene índice', async () => {
+      indexado([]);
+
+      const citas = await servicio.anclarItems('doc-1', ['¿Qué es la célula? Su unidad básica.']);
+
+      expect(citas).toBeNull();
+      expect(embeddings.embeberConsultas).not.toHaveBeenCalled();
+    });
+
+    it('ancla cada ítem entero aunque tenga varias oraciones', async () => {
+      indexado([EJE_X, EJE_Y]);
+      embeddings.embeberConsultas.mockResolvedValue([CASI_X, EJE_Y]);
+
+      const textos = [
+        '¿Qué es la célula? Es la unidad básica de la vida. Tiene membrana.',
+        'Cosa corta.',
+      ];
+
+      const citas = await servicio.anclarItems('doc-1', textos);
+
+      // Ni se parte por oraciones ni se descartan los cortos: un ítem es una cita.
+      expect(embeddings.embeberConsultas).toHaveBeenCalledWith(textos);
+      expect(citas).toHaveLength(2);
+      expect(citas?.[0]).toMatchObject({ claim: textos[0], page: 1 });
+      expect(citas?.[1]).toMatchObject({ claim: textos[1], page: 2 });
+      expect(citas?.[0].score).toBeCloseTo(0.97, 3);
+      expect(citas?.[1].score).toBeCloseTo(1, 3);
+    });
+  });
+
+  describe('representativos', () => {
+    it('no devuelve nada si el libro no tiene fragmentos', async () => {
+      indexado([]);
+
+      expect(await servicio.representativos('doc-1', 40_000)).toEqual([]);
+    });
+
+    it('reparte la muestra por el libro y la devuelve en orden de lectura', async () => {
+      indexado([EJE_X, CASI_X, EJE_Y]);
+
+      // Caben dos de "fragmento N" (11 caracteres cada uno).
+      const pasajes = await servicio.representativos('doc-1', 25);
+
+      // Por relevancia sola saldrían las páginas 1 y 2; MMR cambia una por la 3.
+      expect(pasajes.map((p) => p.pagina)).toEqual([2, 3]);
+      expect(pasajes[0].texto).toBe('fragmento 1');
+      expect(embeddings.embeberConsultas).not.toHaveBeenCalled();
     });
   });
 

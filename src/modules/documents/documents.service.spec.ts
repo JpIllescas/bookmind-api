@@ -10,6 +10,7 @@ import { MlService } from '../ml/ml.service';
 import { Document } from './entities/document.entity';
 import { DocumentsService } from './documents.service';
 import { AlmacenamientoService } from './services/almacenamiento.service';
+import { CapitulosService } from './services/capitulos.service';
 import { ExtraccionService } from './services/extraccion.service';
 
 function crearRepositorioFalso() {
@@ -57,6 +58,7 @@ describe('DocumentsService', () => {
         textoCompleto: 'La célula es la unidad básica de los seres vivos.',
         totalPaginas: 210,
         capaTexto: 'ok',
+        capitulos: [],
       }),
     };
     ml = { clasificar: jest.fn().mockResolvedValue(null) };
@@ -76,6 +78,10 @@ describe('DocumentsService', () => {
         { provide: MlService, useValue: ml },
         { provide: AnclajeService, useValue: anclaje },
         { provide: AlmacenamientoService, useValue: almacenamiento },
+        {
+          provide: CapitulosService,
+          useValue: { guardar: jest.fn().mockResolvedValue([]), listar: jest.fn() },
+        },
       ],
     }).compile();
 
@@ -150,8 +156,48 @@ describe('DocumentsService', () => {
           materia: Materia.CienciasNaturales,
           nivel: Nivel.PrimariaAlta,
           classifierConfidence: 0.91,
-          processingStatus: 'ready',
         }),
+      );
+      expect(documentos.update).toHaveBeenCalledWith(
+        'doc-1',
+        expect.objectContaining({ processingStatus: 'ready' }),
+      );
+    });
+
+    it('marca ready solo después de indexar los fragmentos', async () => {
+      let listoAlIndexar = false;
+
+      anclaje.indexar.mockImplementation(async () => {
+        listoAlIndexar = documentos.update.mock.calls.some(
+          ([, cambios]) => (cambios as Partial<Document>).processingStatus === 'ready',
+        );
+        return [0.1, 0.2, 0.3];
+      });
+
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
+
+      // Mientras se indexa, el estudiante no debe poder preguntar contra un índice vacío.
+      expect(listoAlIndexar).toBe(false);
+      expect(documentos.update).toHaveBeenLastCalledWith('doc-1', {
+        processingStatus: 'ready',
+        docEmbedding: [0.1, 0.2, 0.3],
+      });
+    });
+
+    it('marca el documento como fallido si la indexación revienta', async () => {
+      anclaje.indexar.mockRejectedValue(new Error('modelo de embeddings no disponible'));
+
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
+
+      expect(documentos.update).not.toHaveBeenCalledWith(
+        'doc-1',
+        expect.objectContaining({ processingStatus: 'ready' }),
+      );
+      expect(documentos.update).toHaveBeenLastCalledWith(
+        'doc-1',
+        expect.objectContaining({ processingStatus: 'failed' }),
       );
     });
 
@@ -163,11 +209,11 @@ describe('DocumentsService', () => {
 
       expect(documentos.update).toHaveBeenCalledWith(
         'doc-1',
-        expect.objectContaining({
-          materia: null,
-          nivel: null,
-          processingStatus: 'ready',
-        }),
+        expect.objectContaining({ materia: null, nivel: null }),
+      );
+      expect(documentos.update).toHaveBeenLastCalledWith(
+        'doc-1',
+        expect.objectContaining({ processingStatus: 'ready' }),
       );
     });
 
@@ -177,6 +223,7 @@ describe('DocumentsService', () => {
         textoCompleto: '',
         totalPaginas: 40,
         capaTexto: 'sin_texto',
+        capitulos: [],
       });
 
       await servicio.encolar('usuario-a', archivoFalso);
@@ -236,6 +283,7 @@ describe('DocumentsService', () => {
         textoCompleto: 'a'.repeat(500_000),
         totalPaginas: 300,
         capaTexto: 'ok',
+        capitulos: [],
       });
 
       await servicio.encolar('usuario-a', archivoFalso);
@@ -258,6 +306,49 @@ describe('DocumentsService', () => {
           processingError: 'PDF corrupto',
         }),
       );
+    });
+  });
+
+  describe('obtenerConTexto', () => {
+    const conDocumento = (documento: Partial<Document> | null) => {
+      const consulta = {
+        addSelect: jest.fn().mockReturnThis(),
+        where: jest.fn().mockReturnThis(),
+        andWhere: jest.fn().mockReturnThis(),
+        getOne: jest.fn().mockResolvedValue(documento),
+      };
+      (documentos as { createQueryBuilder?: jest.Mock }).createQueryBuilder = jest
+        .fn()
+        .mockReturnValue(consulta);
+    };
+
+    it('no entrega el texto mientras el libro se está preparando', async () => {
+      conDocumento({ id: 'doc-1', processingStatus: 'processing', textLayer: 'ok' });
+
+      await expect(servicio.obtenerConTexto('usuario-a', 'doc-1')).rejects.toThrow(
+        /todavía se está preparando/,
+      );
+    });
+
+    it('explica que hay que volver a subir un libro fallido', async () => {
+      conDocumento({ id: 'doc-1', processingStatus: 'failed', textLayer: 'ok' });
+
+      await expect(servicio.obtenerConTexto('usuario-a', 'doc-1')).rejects.toThrow(
+        /Vuelve a subirlo/,
+      );
+    });
+
+    it('entrega el texto de un libro listo', async () => {
+      conDocumento({
+        id: 'doc-1',
+        processingStatus: 'ready',
+        textLayer: 'ok',
+        extractedText: 'La célula.',
+      });
+
+      const documento = await servicio.obtenerConTexto('usuario-a', 'doc-1');
+
+      expect(documento.extractedText).toBe('La célula.');
     });
   });
 

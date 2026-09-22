@@ -3,6 +3,7 @@ import { XMLParser } from 'fast-xml-parser';
 import StreamZip from 'node-stream-zip';
 
 import { TipoDocumento } from '../../../common/enums/tipo-documento.enum';
+import { CapituloDetectado, capitulosDesdeMarcas } from './deteccion-capitulos';
 
 /** Una página (PDF) o una sección del spine (EPUB). */
 export interface PaginaExtraida {
@@ -18,6 +19,27 @@ export interface ResultadoExtraccion {
   textoCompleto: string;
   totalPaginas: number;
   capaTexto: CapaTexto;
+  /** Del índice del archivo; vacío cuando el editor no lo incluyó. */
+  capitulos: CapituloDetectado[];
+}
+
+interface Extraido {
+  paginas: PaginaExtraida[];
+  capitulos: CapituloDetectado[];
+}
+
+/** Título con página, tal como lo declara el índice del archivo. */
+interface Marca {
+  titulo: string;
+  pagina: number;
+}
+
+/** Lo que se usa de pdf.js; el tipo real vive en un módulo ESM importado en caliente. */
+interface DocumentoPdf {
+  numPages: number;
+  getOutline(): Promise<{ title: string; dest: unknown }[] | null>;
+  getDestination(nombre: string): Promise<unknown[] | null>;
+  getPageIndex(referencia: unknown): Promise<number>;
 }
 
 /** Debajo de esto casi seguro es un escaneo, no un libro con texto. */
@@ -35,7 +57,7 @@ export class ExtraccionService {
     buffer: Buffer,
     tipo: TipoDocumento,
   ): Promise<ResultadoExtraccion> {
-    const paginas =
+    const { paginas, capitulos } =
       tipo === TipoDocumento.PDF
         ? await this.extraerDePdf(buffer)
         : await this.extraerDeEpub(buffer);
@@ -50,11 +72,12 @@ export class ExtraccionService {
       textoCompleto,
       totalPaginas: paginas.length,
       capaTexto: this.evaluarCapaTexto(paginas, textoCompleto),
+      capitulos,
     };
   }
 
   /** Página por página, que es lo que permite citar dónde estaba cada cosa. */
-  private async extraerDePdf(buffer: Buffer): Promise<PaginaExtraida[]> {
+  private async extraerDePdf(buffer: Buffer): Promise<Extraido> {
     // Import dinámico: pdfjs-dist es ESM y esto compila a CommonJS.
     const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
 
@@ -83,15 +106,47 @@ export class ExtraccionService {
         pagina.cleanup();
       }
 
-      return paginas;
+      return {
+        paginas,
+        capitulos: await this.capitulosDelOutline(documento as unknown as DocumentoPdf),
+      };
     } finally {
       // En pdf.js v6 `destroy()` está en la tarea: si no, el worker queda vivo.
       await tarea.destroy();
     }
   }
 
+  /** El índice del PDF, cuando el editor lo incluyó: títulos reales y páginas exactas. */
+  private async capitulosDelOutline(documento: DocumentoPdf): Promise<CapituloDetectado[]> {
+    const outline = await documento.getOutline().catch(() => null);
+    if (!outline || outline.length === 0) return [];
+
+    const marcas: Marca[] = [];
+
+    // Solo el primer nivel: las subsecciones sobran para navegar.
+    for (const entrada of outline) {
+      try {
+        const destino =
+          typeof entrada.dest === 'string'
+            ? await documento.getDestination(entrada.dest)
+            : (entrada.dest as unknown[] | null);
+
+        if (!destino?.[0]) continue;
+
+        marcas.push({
+          titulo: entrada.title.replace(/\s+/g, ' ').trim(),
+          pagina: (await documento.getPageIndex(destino[0])) + 1,
+        });
+      } catch {
+        // Una entrada rota del índice no invalida las demás.
+      }
+    }
+
+    return capitulosDesdeMarcas(marcas, documento.numPages);
+  }
+
   /** Recorre el spine del EPUB: su orden hace de número de página. */
-  private async extraerDeEpub(buffer: Buffer): Promise<PaginaExtraida[]> {
+  private async extraerDeEpub(buffer: Buffer): Promise<Extraido> {
     // node-stream-zip lee de archivo, no de buffer: no descomprime en memoria.
     const { file, limpiar } = await this.escribirTemporal(buffer);
     const zip = new StreamZip.async({ file, storeEntries: true });
@@ -138,11 +193,15 @@ export class ExtraccionService {
         : '';
 
       const paginas: PaginaExtraida[] = [];
+      // Con qué "página" (posición en el spine) se corresponde cada archivo.
+      const paginaPorHref = new Map<string, number>();
 
       for (const [indice, itemref] of spine.entries()) {
         const idref = itemref?.['@_idref'];
         const href = idref ? porId.get(String(idref)) : undefined;
         if (!href) continue;
+
+        paginaPorHref.set(href, indice + 1);
 
         try {
           const contenido = await zip.entryData(baseOpf + href);
@@ -156,11 +215,89 @@ export class ExtraccionService {
         }
       }
 
-      return paginas;
+      const capitulos = await this.capitulosDelEpub(
+        zip,
+        parser,
+        baseOpf,
+        manifest,
+        paquete?.spine?.['@_toc'],
+        paginaPorHref,
+        paginas.length,
+      );
+
+      return { paginas, capitulos };
     } finally {
       await zip.close().catch(() => undefined);
       await limpiar();
     }
+  }
+
+  /** La tabla de contenido del EPUB: nav.xhtml (EPUB 3) o toc.ncx (EPUB 2). */
+  private async capitulosDelEpub(
+    zip: InstanceType<typeof StreamZip.async>,
+    parser: XMLParser,
+    baseOpf: string,
+    manifest: any[],
+    idNcx: unknown,
+    paginaPorHref: Map<string, number>,
+    ultimaPagina: number,
+  ): Promise<CapituloDetectado[]> {
+    const nav = manifest.find((item) =>
+      String(item?.['@_properties'] ?? '').split(/\s+/).includes('nav'),
+    );
+    const ncx =
+      manifest.find((item) => item?.['@_id'] === idNcx) ??
+      manifest.find((item) => item?.['@_media-type'] === 'application/x-dtbncx+xml');
+
+    const marcas: Marca[] = [];
+
+    // El href de la tabla apunta al archivo (con o sin #ancla); la página es la del spine.
+    const paginaDe = (href: unknown): number | undefined =>
+      paginaPorHref.get(String(href ?? '').split('#')[0]);
+
+    try {
+      if (nav?.['@_href']) {
+        const xhtml = parser.parse(
+          (await zip.entryData(baseOpf + String(nav['@_href']))).toString('utf-8'),
+        ) as any;
+        const navs = this.comoArreglo(xhtml?.html?.body?.nav);
+        const toc =
+          navs.find((n) => String(n?.['@_epub:type'] ?? '') === 'toc') ?? navs[0];
+
+        for (const li of this.comoArreglo(toc?.ol?.li)) {
+          const enlace = this.comoArreglo(li?.a)[0];
+          const pagina = paginaDe(enlace?.['@_href']);
+          const titulo = this.textoDe(enlace);
+          if (pagina && titulo) marcas.push({ titulo, pagina });
+        }
+      } else if (ncx?.['@_href']) {
+        const doc = parser.parse(
+          (await zip.entryData(baseOpf + String(ncx['@_href']))).toString('utf-8'),
+        ) as any;
+
+        for (const punto of this.comoArreglo(doc?.ncx?.navMap?.navPoint)) {
+          const pagina = paginaDe(this.comoArreglo(punto?.content)[0]?.['@_src']);
+          const titulo = this.textoDe(this.comoArreglo(punto?.navLabel)[0]?.text);
+          if (pagina && titulo) marcas.push({ titulo, pagina });
+        }
+      }
+    } catch {
+      this.logger.warn('No se pudo leer la tabla de contenido del EPUB.');
+    }
+
+    return capitulosDesdeMarcas(marcas, ultimaPagina);
+  }
+
+  /** Texto de un nodo del parser, aunque venga envuelto en <span> u otras etiquetas. */
+  private textoDe(nodo: unknown): string {
+    if (nodo === null || nodo === undefined) return '';
+    if (typeof nodo !== 'object') return String(nodo).replace(/\s+/g, ' ').trim();
+
+    return Object.entries(nodo as Record<string, unknown>)
+      .filter(([clave]) => !clave.startsWith('@_'))
+      .map(([, valor]) => this.textoDe(valor))
+      .filter(Boolean)
+      .join(' ');
   }
 
   private async escribirTemporal(buffer: Buffer) {
@@ -222,7 +359,7 @@ export class ExtraccionService {
       // Une palabras cortadas por guion: "matemá-\nticas".
       .replace(/(\w)-\s*\n\s*(\w)/g, '$1$2')
       .replace(/\r\n/g, '\n')
-      .replace(/[ \t ]+/g, ' ')
+      .replace(/[ \t ]+/g, ' ')
       .replace(/\n{3,}/g, '\n\n')
       .trim();
   }

@@ -8,6 +8,7 @@ import { DocumentChunk } from '../documents/entities/document-chunk.entity';
 import { PaginaExtraida } from '../documents/services/extraccion.service';
 import { EmbeddingsService } from './services/embeddings.service';
 import { FragmentacionService } from './services/fragmentacion.service';
+import { MuestreoService } from './services/muestreo.service';
 
 export interface ResultadoAnclaje {
   groundingScore: number | null;
@@ -15,6 +16,14 @@ export interface ResultadoAnclaje {
   /** Afirmaciones por debajo del umbral: posible alucinación. */
   flaggedClaims: string[];
 }
+
+export interface Pasaje {
+  pagina: number;
+  texto: string;
+}
+
+/** Lo mínimo del índice para comparar: el texto no hace falta y pesa. */
+type FragmentoIndexado = Pick<DocumentChunk, 'pagina' | 'embedding'>;
 
 /** Una afirmación más corta que esto no vale la pena verificar. */
 const MINIMO_PALABRAS_AFIRMACION = 5;
@@ -37,6 +46,7 @@ export class AnclajeService {
     private readonly fragmentos: Repository<DocumentChunk>,
     private readonly embeddings: EmbeddingsService,
     private readonly fragmentacion: FragmentacionService,
+    private readonly muestreo: MuestreoService,
   ) {}
 
   /** Parte el libro en fragmentos, los embebe y devuelve su huella semántica. */
@@ -78,44 +88,19 @@ export class AnclajeService {
       return { groundingScore: null, citations: [], flaggedClaims: [] };
     }
 
-    const fragmentos = await this.fragmentos.find({
-      where: { documentId },
-      select: { id: true, pagina: true, texto: true, embedding: true },
-    });
+    const fragmentos = await this.cargarIndice(documentId);
 
     // Sin índice no hay contra qué comparar, así que nada queda comprobado.
     if (fragmentos.length === 0) {
-      this.logger.warn(`El documento ${documentId} no tiene fragmentos indexados.`);
       return { groundingScore: 0, citations: [], flaggedClaims: afirmaciones };
     }
 
     const vectores = await this.embeddings.embeberConsultas(afirmaciones);
+    const citations = this.citar(afirmaciones, vectores, fragmentos);
 
-    const citations: Cita[] = [];
-    const flaggedClaims: string[] = [];
-
-    afirmaciones.forEach((afirmacion, i) => {
-      let mejor = fragmentos[0];
-      let mejorPuntaje = -1;
-
-      for (const fragmento of fragmentos) {
-        const puntaje = EmbeddingsService.coseno(vectores[i], fragmento.embedding);
-        if (puntaje > mejorPuntaje) {
-          mejorPuntaje = puntaje;
-          mejor = fragmento;
-        }
-      }
-
-      citations.push({
-        claim: afirmacion,
-        page: mejor.pagina,
-        score: Number(mejorPuntaje.toFixed(4)),
-      });
-
-      if (mejorPuntaje < CONSTANTS.GROUNDING_THRESHOLD) {
-        flaggedClaims.push(afirmacion);
-      }
-    });
+    const flaggedClaims = citations
+      .filter((cita) => cita.score < CONSTANTS.GROUNDING_THRESHOLD)
+      .map((cita) => cita.claim);
 
     const promedio =
       citations.reduce((suma, cita) => suma + cita.score, 0) / citations.length;
@@ -125,6 +110,40 @@ export class AnclajeService {
       citations,
       flaggedClaims,
     };
+  }
+
+  /**
+   * Ancla cada texto entero, sin partirlo en oraciones: sirve para tarjetas y
+   * preguntas, que son un ítem cada una. Null si el libro no tiene índice.
+   */
+  async anclarItems(documentId: string, textos: string[]): Promise<Cita[] | null> {
+    if (textos.length === 0) return [];
+
+    const fragmentos = await this.cargarIndice(documentId);
+    if (fragmentos.length === 0) return null;
+
+    const vectores = await this.embeddings.embeberConsultas(textos);
+
+    return this.citar(textos, vectores, fragmentos);
+  }
+
+  /** Muestra representativa de todo el libro, en orden de lectura y dentro del presupuesto. */
+  async representativos(documentId: string, presupuestoCaracteres: number): Promise<Pasaje[]> {
+    const fragmentos = await this.fragmentos.find({
+      where: { documentId },
+      select: { indice: true, pagina: true, texto: true, embedding: true },
+      order: { indice: 'ASC' },
+    });
+
+    const elegidos = this.muestreo.seleccionar(
+      fragmentos.map((f) => ({ embedding: f.embedding, caracteres: f.texto.length })),
+      presupuestoCaracteres,
+    );
+
+    // MMR elige por novedad; el modelo los necesita en el orden del libro.
+    return elegidos
+      .sort((a, b) => a - b)
+      .map((i) => ({ pagina: fragmentos[i].pagina, texto: fragmentos[i].texto }));
   }
 
   /** Recupera los pasajes más relevantes cuando el libro no cabe en contexto. */
@@ -182,6 +201,45 @@ export class AnclajeService {
       }))
       .sort((a, b) => b.score - a.score)
       .slice(0, cuantos);
+  }
+
+  private async cargarIndice(documentId: string): Promise<FragmentoIndexado[]> {
+    const fragmentos = await this.fragmentos.find({
+      where: { documentId },
+      select: { pagina: true, embedding: true },
+    });
+
+    if (fragmentos.length === 0) {
+      this.logger.warn(`El documento ${documentId} no tiene fragmentos indexados.`);
+    }
+
+    return fragmentos;
+  }
+
+  /** Para cada afirmación, la página del fragmento más parecido y cuánto se parece. */
+  private citar(
+    afirmaciones: string[],
+    vectores: number[][],
+    fragmentos: FragmentoIndexado[],
+  ): Cita[] {
+    return afirmaciones.map((afirmacion, i) => {
+      let mejor = fragmentos[0];
+      let mejorPuntaje = -1;
+
+      for (const fragmento of fragmentos) {
+        const puntaje = EmbeddingsService.coseno(vectores[i], fragmento.embedding);
+        if (puntaje > mejorPuntaje) {
+          mejorPuntaje = puntaje;
+          mejor = fragmento;
+        }
+      }
+
+      return {
+        claim: afirmacion,
+        page: mejor.pagina,
+        score: Number(mejorPuntaje.toFixed(4)),
+      };
+    });
   }
 
   /** Parte la respuesta en afirmaciones verificables, una por oración. */

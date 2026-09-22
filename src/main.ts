@@ -1,3 +1,6 @@
+// Las columnas son `timestamp` sin zona y Postgres guarda UTC: Node debe leerlas igual.
+process.env.TZ = 'UTC';
+
 import { Logger, ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { NestExpressApplication } from '@nestjs/platform-express';

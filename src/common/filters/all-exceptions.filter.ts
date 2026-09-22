@@ -48,8 +48,24 @@ export class AllExceptionsFilter implements ExceptionFilter {
     // El detalle queda únicamente en los logs internos del backend.
     response.status(status).json({
       statusCode: status,
-      message: this.mensajePublico(status),
+      message: this.mensajeParaElEstudiante(exception, status) ?? this.mensajePublico(status),
     });
+  }
+
+  // Los mensajes propios son oraciones escritas para el estudiante 
+  private mensajeParaElEstudiante(exception: unknown, status: number): string | null {
+    if (!(exception instanceof HttpException)) return null;
+    if (status >= HttpStatus.INTERNAL_SERVER_ERROR && status !== HttpStatus.SERVICE_UNAVAILABLE) {
+      return null;
+    }
+
+    const respuesta = exception.getResponse();
+    const mensaje =
+      typeof respuesta === 'object' && respuesta !== null
+        ? (respuesta as { message?: unknown }).message
+        : null;
+
+    return typeof mensaje === 'string' && /[.!?]$/.test(mensaje.trim()) ? mensaje : null;
   }
 
   private mensajePublico(status: number): string {

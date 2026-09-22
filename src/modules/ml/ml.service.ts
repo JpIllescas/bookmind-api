@@ -25,6 +25,20 @@ export interface ResultadoClasificacion {
 /** Clasificar un libro tarda menos de un segundo. */
 const TIMEOUT_MS = 15_000;
 
+/** Generadores del motor de estudio propio, con las mismas claves que el ml-service. */
+export type TipoEstudio = 'summary' | 'concepts' | 'flashcards' | 'quiz' | 'timeline';
+
+export interface PaginaEstudio {
+  pagina: number;
+  texto: string;
+}
+
+export interface ResultadoEstudio<T = unknown> {
+  tipo: TipoEstudio;
+  origen: 'motor';
+  items: T[];
+}
+
 /** Cliente del microservicio de clasificación (pieza 3). */
 @Injectable()
 export class MlService {
@@ -70,6 +84,35 @@ export class MlService {
         `No se pudo contactar al clasificador en ${this.baseUrl}: ` +
           `${error instanceof Error ? error.message : String(error)}. ` +
           'El documento se guardará sin materia.',
+      );
+      return null;
+    }
+  }
+
+  /** Material generado por el motor propio; null si el servicio no responde. */
+  async estudio<T = unknown>(
+    tipo: TipoEstudio,
+    paginas: PaginaEstudio[],
+    cantidad?: number,
+  ): Promise<ResultadoEstudio<T> | null> {
+    try {
+      const respuesta = await this.peticion(`/study/${tipo}`, {
+        method: 'POST',
+        body: JSON.stringify({ paginas, cantidad }),
+        timeoutMs: TIMEOUT_MS,
+      });
+
+      if (!respuesta.ok) {
+        const detalle = await respuesta.text().catch(() => '');
+        this.logger.warn(`El motor de estudio respondió ${respuesta.status}: ${detalle.slice(0, 200)}`);
+        return null;
+      }
+
+      return (await respuesta.json()) as ResultadoEstudio<T>;
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo contactar al motor de estudio en ${this.baseUrl}: ` +
+          `${error instanceof Error ? error.message : String(error)}.`,
       );
       return null;
     }

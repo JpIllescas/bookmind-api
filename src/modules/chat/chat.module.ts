@@ -10,9 +10,12 @@ import { AsistenteController } from './asistente.controller';
 import { ChatController } from './chat.controller';
 import { ChatService } from './chat.service';
 import { ChatMessage } from './entities/chat-message.entity';
+import { Conversation } from './entities/conversation.entity';
 import { GeminiProvider } from './providers/gemini.provider';
 import { LLM_PROVIDER, LlmProvider } from './providers/llm-provider.interface';
 import { MockProvider } from './providers/mock.provider';
+import { ContextoService } from './services/contexto.service';
+import { ConversacionesService } from './services/conversaciones.service';
 import { IntencionService } from './services/intencion.service';
 import { MetricasLlmService } from './services/metricas-llm.service';
 import { PromptService } from './services/prompt.service';
@@ -42,7 +45,7 @@ const proveedorLlm: Provider = {
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ChatMessage]),
+    TypeOrmModule.forFeature([ChatMessage, Conversation]),
     DocumentsModule,
     AnclajeModule,
     UsersModule,
@@ -50,11 +53,13 @@ const proveedorLlm: Provider = {
   controllers: [ChatController, AsistenteController],
   providers: [
     ChatService,
+    ConversacionesService,
     PromptService,
+    ContextoService,
     IntencionService,
     MetricasLlmService,
     proveedorLlm,
   ],
-  exports: [LLM_PROVIDER, PromptService],
+  exports: [LLM_PROVIDER, PromptService, ContextoService],
 })
 export class ChatModule {}

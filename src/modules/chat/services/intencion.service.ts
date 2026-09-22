@@ -6,7 +6,9 @@ import { TipoBloque } from '../../../common/enums/tipo-bloque.enum';
 export type MaterialPedido =
   | TipoBloque.Summary
   | TipoBloque.Flashcards
-  | TipoBloque.Quiz;
+  | TipoBloque.Quiz
+  | TipoBloque.Glossary
+  | TipoBloque.Timeline;
 
 /** Verbos con los que un estudiante pide que le preparen algo. */
 const PETICION =
@@ -26,6 +28,14 @@ const MATERIALES: [RegExp, MaterialPedido][] = [
     TipoBloque.Quiz,
   ],
   [/\b(resumen|resúmeme|resumeme|resúmelo|resumelo|resumir)\b/, TipoBloque.Summary],
+  [
+    /\b(glosario|conceptos( clave)?|términos|terminos|vocabulario|definiciones)\b/,
+    TipoBloque.Glossary,
+  ],
+  [
+    /\b(l[íi]nea (de|del) tiempo|cronolog[íi]a|fechas (clave|importantes))\b/,
+    TipoBloque.Timeline,
+  ],
 ];
 
 /** Sin verbo de petición, solo se acepta un mensaje telegráfico ("ahora flashcards"). */

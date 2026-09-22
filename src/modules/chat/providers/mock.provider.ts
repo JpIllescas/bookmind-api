@@ -7,6 +7,17 @@ import { LlmProvider, PeticionLlm } from './llm-provider.interface';
 export class MockProvider implements LlmProvider {
   readonly nombre = 'mock';
 
+  /** Simula el goteo del modelo real para que el streaming se pueda probar sin cuota. */
+  async *responderStream(peticion: PeticionLlm): AsyncIterable<string> {
+    const palabras = (await this.responder(peticion)).split(' ');
+
+    for (let i = 0; i < palabras.length; i += 3) {
+      if (peticion.senal?.aborted) return;
+      yield palabras.slice(i, i + 3).join(' ') + (i + 3 < palabras.length ? ' ' : '');
+      await new Promise((listo) => setTimeout(listo, 30));
+    }
+  }
+
   async responder(peticion: PeticionLlm): Promise<string> {
     const frases = this.frasesDelLibro(peticion.systemPrompt);
 

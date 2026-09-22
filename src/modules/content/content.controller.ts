@@ -59,9 +59,9 @@ export class ContentController {
   @Delete(':id')
   eliminar(
     @CurrentUser() usuario: AuthUser,
-    @Param('documentId', ParseUUIDPipe) _documentId: string,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
     @Param('id', ParseUUIDPipe) id: string,
   ) {
-    return this.content.eliminar(usuario.id, id);
+    return this.content.eliminar(usuario.id, documentId, id);
   }
 }

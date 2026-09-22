@@ -11,8 +11,8 @@ export interface Fragmento {
 /** Palabras por fragmento: con contexto propio, pero sin abarcar media página. */
 const PALABRAS_POR_FRAGMENTO = 110;
 
-/** Palabras repetidas entre fragmentos vecinos. */
-const SOLAPE = 20;
+/** Palabras repetidas entre fragmentos vecinos; quien reconstruya una página debe quitarlas. */
+export const SOLAPE = 20;
 
 /** Un fragmento con menos que esto es ruido de extracción. */
 const MINIMO_PALABRAS = 15;

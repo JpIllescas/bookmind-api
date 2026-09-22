@@ -42,4 +42,8 @@ export class DocumentChunk {
   /** Coseno calculado en Node; a escala de un libro no hace falta pgvector. */
   @Column({ type: 'double precision', array: true })
   embedding: number[];
+
+  /** Capítulo al que pertenece la página; null en libros sin estructura detectable. */
+  @Column({ name: 'chapter_id', type: 'uuid', nullable: true })
+  chapterId: string | null;
 }

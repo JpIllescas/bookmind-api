@@ -95,6 +95,14 @@ export class DocumentsController {
     return this.documentos.eliminar(usuario.id, id);
   }
 
+  @Get(':id/chapters')
+  capitulos(
+    @CurrentUser() usuario: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.documentos.capitulosDe(usuario.id, id);
+  }
+
   @Get(':id')
   async detalle(
     @CurrentUser() usuario: AuthUser,

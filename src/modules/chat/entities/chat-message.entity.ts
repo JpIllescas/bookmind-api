@@ -12,6 +12,7 @@ import { RolMensaje } from '../../../common/enums/rol-mensaje.enum';
 import { TipoBloque } from '../../../common/enums/tipo-bloque.enum';
 import { Document } from '../../documents/entities/document.entity';
 import { User } from '../../users/entities/user.entity';
+import { Conversation } from './conversation.entity';
 
 /** Una cita concreta: de dónde salió una afirmación de la IA. */
 export interface Cita {
@@ -22,6 +23,7 @@ export interface Cita {
 
 @Entity('chat_messages')
 @Index(['documentId', 'createdAt'])
+@Index(['conversationId', 'createdAt'])
 export class ChatMessage {
   @PrimaryGeneratedColumn('uuid')
   id: string;
@@ -35,6 +37,16 @@ export class ChatMessage {
   })
   @JoinColumn({ name: 'document_id' })
   document: Document;
+
+  @Column({ name: 'conversation_id' })
+  conversationId: string;
+
+  @ManyToOne(() => Conversation, (conversacion) => conversacion.messages, {
+    onDelete: 'CASCADE',
+    nullable: false,
+  })
+  @JoinColumn({ name: 'conversation_id' })
+  conversation: Conversation;
 
   @Column({ name: 'user_id' })
   userId: string;

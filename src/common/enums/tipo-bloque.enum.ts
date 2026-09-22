@@ -4,4 +4,6 @@ export enum TipoBloque {
   Summary = 'summary',
   Flashcards = 'flashcards',
   Quiz = 'quiz',
+  Glossary = 'glossary',
+  Timeline = 'timeline',
 }

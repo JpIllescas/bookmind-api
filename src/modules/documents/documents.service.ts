@@ -23,6 +23,8 @@ import {
   MIME_POR_TIPO,
   type ArchivoAbierto,
 } from './services/almacenamiento.service';
+import { CapitulosService } from './services/capitulos.service';
+import { detectarCapitulos } from './services/deteccion-capitulos';
 import { ExtraccionService } from './services/extraccion.service';
 
 const CARACTERES_PARA_CLASIFICAR = 200_000;
@@ -38,6 +40,7 @@ export class DocumentsService implements OnApplicationBootstrap {
     private readonly ml: MlService,
     private readonly anclaje: AnclajeService,
     private readonly almacenamiento: AlmacenamientoService,
+    private readonly capitulos: CapitulosService,
   ) {}
 
   /** Guarda el archivo y deja el trabajo pesado fuera del request. */
@@ -120,7 +123,7 @@ export class DocumentsService implements OnApplicationBootstrap {
     try {
       const buffer = await this.almacenamiento.leer(documento.storagePath!);
 
-      const { paginas, textoCompleto, totalPaginas, capaTexto } =
+      const { paginas, textoCompleto, totalPaginas, capaTexto, capitulos } =
         await this.extraccion.extraer(buffer, documento.type);
 
       // Un escaneo se puede leer en el visor, pero no hay texto que clasificar ni indexar.
@@ -154,14 +157,21 @@ export class DocumentsService implements OnApplicationBootstrap {
         classifierConfidence: clasificacion?.confidence ?? null,
         classifierFeatures: clasificacion?.featureImportance ?? undefined,
         tintColor: this.elegirTinte(clasificacion?.materia ?? null),
-        processingStatus: 'ready',
       });
 
       const huella = await this.anclaje.indexar(documento.id, paginas);
 
-      if (huella.length > 0) {
-        await this.documentos.update(documento.id, { docEmbedding: huella });
-      }
+      // El índice del archivo manda; si no trae, se leen los encabezados del texto.
+      await this.capitulos.guardar(
+        documento.id,
+        capitulos.length > 0 ? capitulos : detectarCapitulos(paginas),
+      );
+
+      // `ready` solo con el índice hecho: antes el chat podía verificar contra nada.
+      await this.documentos.update(documento.id, {
+        processingStatus: 'ready',
+        ...(huella.length > 0 ? { docEmbedding: huella } : {}),
+      });
     } catch (error) {
       this.logger.error(
         `Falló el procesamiento de ${documento.id}: ${String(error)}`,
@@ -212,6 +222,21 @@ export class DocumentsService implements OnApplicationBootstrap {
     return documentos.map((documento) => this.comoResumen(documento));
   }
 
+  /** Estructura del libro para navegar; se deriva sola en libros indexados antes. */
+  async capitulosDe(userId: string, id: string) {
+    await this.obtener(userId, id);
+
+    const capitulos = await this.capitulos.listar(id);
+
+    return capitulos.map((capitulo) => ({
+      id: capitulo.id,
+      orden: capitulo.orden,
+      titulo: capitulo.titulo,
+      paginaInicio: capitulo.paginaInicio,
+      paginaFin: capitulo.paginaFin,
+    }));
+  }
+
   async obtener(userId: string, id: string): Promise<Document> {
     const documento = await this.documentos.findOne({
       where: { id, userId },
@@ -234,6 +259,15 @@ export class DocumentsService implements OnApplicationBootstrap {
 
     if (!documento) {
       throw new NotFoundException('No se encontró el documento.');
+    }
+
+    // Hasta `ready` no hay índice: el asistente verificaría contra nada.
+    if (documento.processingStatus !== 'ready') {
+      throw new BadRequestException(
+        documento.processingStatus === 'failed'
+          ? 'No se pudo procesar este libro. Vuelve a subirlo.'
+          : 'Este libro todavía se está preparando. En cuanto termine podrás usar el asistente.',
+      );
     }
 
     // El chat, los materiales y los planes necesitan texto: un escaneo no lo tiene.

@@ -8,6 +8,9 @@ import { LlmProvider, PeticionLlm } from './llm-provider.interface';
 /** Un reintento: en el nivel gratuito cada intento gasta cuota diaria. */
 const ESPERAS_MS = [2000];
 
+/** Con 4000 un resumen por capítulos se cortaba; el modelo admite bastante más. */
+const MAX_TOKENS_POR_DEFECTO = 8192;
+
 @Injectable()
 export class GeminiProvider implements LlmProvider {
   readonly nombre = `gemini:${CONSTANTS.GEMINI_MODEL}`;
@@ -53,8 +56,54 @@ export class GeminiProvider implements LlmProvider {
     }
   }
 
-  private async pedir(peticion: PeticionLlm): Promise<string> {
-    const respuesta = await this.cliente.models.generateContent({
+  /** Trozos según llegan del modelo; el estudiante ve la respuesta formarse. */
+  async *responderStream(peticion: PeticionLlm): AsyncIterable<string> {
+    for (let intento = 0; ; intento += 1) {
+      const arranque = Date.now();
+      let entregado = false;
+
+      try {
+        const flujo = await this.cliente.models.generateContentStream(this.parametros(peticion));
+
+        for await (const trozo of flujo) {
+          const texto = trozo.text;
+          if (texto) {
+            entregado = true;
+            yield texto;
+          }
+        }
+
+        if (!entregado) {
+          throw new ServiceUnavailableException(
+            'El asistente no pudo generar una respuesta para esa pregunta. Intenta reformularla.',
+          );
+        }
+
+        this.metricas.anotar('ok', Date.now() - arranque);
+        return;
+      } catch (error) {
+        // Cancelado por el estudiante: no es un fallo del modelo.
+        if (peticion.senal?.aborted) return;
+
+        // Solo se reintenta si aún no salió texto: repetir a medias duplicaría la respuesta.
+        const reintentable =
+          !entregado && intento < ESPERAS_MS.length && this.esSaturacion(error);
+
+        if (!reintentable) {
+          const fallo = this.comoExcepcion(error);
+          this.metricas.anotar(this.tipoDeFallo(error), Date.now() - arranque, fallo.message);
+          throw fallo;
+        }
+
+        this.metricas.anotarReintento();
+        this.logger.warn(`Gemini saturado en streaming; reintento en ${ESPERAS_MS[intento]} ms.`);
+        await new Promise((listo) => setTimeout(listo, ESPERAS_MS[intento] + Math.random() * 300));
+      }
+    }
+  }
+
+  private parametros(peticion: PeticionLlm) {
+    return {
       model: CONSTANTS.GEMINI_MODEL,
       contents: [
         ...peticion.historial.map((turno) => ({
@@ -66,10 +115,14 @@ export class GeminiProvider implements LlmProvider {
       config: {
         systemInstruction: peticion.systemPrompt,
         temperature: 0.3,
-        // Con 1200 un resumen de libro se cortaba a media frase.
-        maxOutputTokens: 4000,
+        maxOutputTokens: peticion.maxTokens ?? MAX_TOKENS_POR_DEFECTO,
+        abortSignal: peticion.senal,
       },
-    });
+    };
+  }
+
+  private async pedir(peticion: PeticionLlm): Promise<string> {
+    const respuesta = await this.cliente.models.generateContent(this.parametros(peticion));
 
     const texto = respuesta.text?.trim();
 
