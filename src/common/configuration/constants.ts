@@ -87,9 +87,21 @@ export const CONSTANTS = {
   // Clasificador (pieza 3)
   ML_SERVICE_URL:
     configService.get<string>('ML_SERVICE_URL') ?? 'http://localhost:8000',
+  OCR_ENABLED:
+    (configService.get<string>('OCR_ENABLED') ?? 'true') === 'true',
+  OCR_LANGUAGE:
+    configService.get<string>('OCR_LANGUAGE') ?? 'spa+eng',
+
+  // Neon Object Storage (S3-compatible)
+  AWS_ENDPOINT_URL_S3: configService.get<string>('AWS_ENDPOINT_URL_S3') ?? '',
+  AWS_REGION: configService.get<string>('AWS_REGION') ?? '',
+  AWS_ACCESS_KEY_ID: configService.get<string>('AWS_ACCESS_KEY_ID') ?? '',
+  AWS_SECRET_ACCESS_KEY: configService.get<string>('AWS_SECRET_ACCESS_KEY') ?? '',
+  S3_BUCKET: configService.get<string>('S3_BUCKET') ?? '',
+  S3_FORCE_PATH_STYLE:
+    (configService.get<string>('S3_FORCE_PATH_STYLE') ?? 'true') === 'true',
 
   // Archivos
-  UPLOAD_PATH: configService.get<string>('UPLOAD_PATH') ?? './uploads',
   MAX_FILE_SIZE_MB: Number(configService.getOrThrow('MAX_FILE_SIZE_MB')),
 
   // Frontend (CORS)

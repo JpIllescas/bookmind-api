@@ -85,7 +85,10 @@ describe('AuthService', () => {
 
       await expect(
         servicio.login({ email: 'a@b.com', password: 'la-incorrecta' }),
-      ).rejects.toBeInstanceOf(UnauthorizedException);
+      ).rejects.toMatchObject({
+        constructor: UnauthorizedException,
+        message: 'Contraseña o correo no correctos',
+      });
     });
 
     it('devuelve el mismo error exista o no el correo', async () => {

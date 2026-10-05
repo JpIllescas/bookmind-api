@@ -22,7 +22,7 @@ export class AddDocumentFile1786298661056 implements MigrationInterface {
     `);
 
     await queryRunner.query(`
-      COMMENT ON COLUMN "bm_bookmind"."documents"."storage_path"  IS 'Ruta del archivo dentro de UPLOAD_PATH: "<user_id>/<document_id>.<ext>". NULL en los documentos subidos antes de esta migración';
+      COMMENT ON COLUMN "bm_bookmind"."documents"."storage_path"  IS 'Clave privada del objeto en Neon Object Storage: "<user_id>/<document_id>.<ext>". NULL en los documentos subidos antes de esta migración';
       COMMENT ON COLUMN "bm_bookmind"."documents"."file_size"     IS 'Tamaño en bytes del archivo original';
       COMMENT ON COLUMN "bm_bookmind"."documents"."text_layer"    IS 'ok = tiene texto seleccionable; sin_texto = escaneo de imágenes, se puede leer pero no alimenta al chat ni al clasificador';
     `);

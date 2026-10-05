@@ -1,19 +1,26 @@
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  HeadObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from '@aws-sdk/client-s3';
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { createReadStream, type ReadStream } from 'node:fs';
-import { copyFile, mkdir, readFile, rename, rm, stat } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { createReadStream } from 'node:fs';
+import { rm } from 'node:fs/promises';
+import { isAbsolute } from 'node:path';
+import { Readable } from 'node:stream';
 
 import { CONSTANTS } from '../../../common/configuration/constants';
 import { TipoDocumento } from '../../../common/enums/tipo-documento.enum';
 
-/** Trozo de archivo pedido por el visor con una cabecera Range. */
 export interface RangoSolicitado {
   inicio: number;
   fin: number;
 }
 
 export interface ArchivoAbierto {
-  flujo: ReadStream;
+  flujo: Readable;
   tamano: number;
   inicio: number;
   fin: number;
@@ -30,123 +37,155 @@ export const MIME_POR_TIPO: Record<TipoDocumento, string> = {
   [TipoDocumento.EPUB]: 'application/epub+zip',
 };
 
-/** Guarda y sirve el archivo original del libro desde UPLOAD_PATH. */
+/** Neon Object Storage es S3-compatible; el bucket permanece privado. */
 @Injectable()
 export class AlmacenamientoService {
   private readonly logger = new Logger(AlmacenamientoService.name);
-  private readonly raiz = resolve(CONSTANTS.UPLOAD_PATH);
-
-  /** Carpeta donde Multer deja el archivo antes de conocerse el id del documento. */
-  get carpetaTemporal(): string {
-    return join(this.raiz, 'tmp');
-  }
+  private readonly cliente: S3Client | null = this.crearCliente();
 
   async prepararCarpetas(): Promise<void> {
-    await mkdir(this.carpetaTemporal, { recursive: true });
+    // Se conserva el hook para no bloquear el arranque de documentos pendientes.
   }
 
-  /** Mueve el archivo recién subido a su ubicación definitiva. */
   async guardarDefinitivo(
-    origen: string,
+    origen: string | Buffer,
     userId: string,
     documentId: string,
     tipo: TipoDocumento,
   ): Promise<string> {
-    const relativo = join(userId, `${documentId}.${EXTENSION[tipo]}`);
-    const destino = join(this.raiz, relativo);
-
-    await mkdir(dirname(destino), { recursive: true });
+    const clave = `${userId}/${documentId}.${EXTENSION[tipo]}`;
+    const cuerpo = Buffer.isBuffer(origen) ? origen : createReadStream(origen);
 
     try {
-      await rename(origen, destino);
-    } catch {
-      // rename falla si tmp y la carpeta final están en discos distintos.
-      await copyFile(origen, destino);
-      await rm(origen, { force: true });
+      await this.clienteRequerido().send(
+        new PutObjectCommand({
+          Bucket: CONSTANTS.S3_BUCKET,
+          Key: clave,
+          Body: cuerpo,
+          ContentType: MIME_POR_TIPO[tipo],
+        }),
+      );
+    } finally {
+      if (typeof origen === 'string') {
+        await rm(origen, { force: true });
+      }
     }
 
-    return relativo;
+    return clave;
   }
 
-  async tamano(rutaRelativa: string): Promise<number> {
-    const { size } = await stat(this.rutaAbsoluta(rutaRelativa)).catch(() => {
-      throw new NotFoundException('El archivo del documento ya no está disponible.');
-    });
-
-    return size;
+  async tamano(clave: string): Promise<number> {
+    try {
+      const respuesta = await this.clienteRequerido().send(
+        new HeadObjectCommand({ Bucket: CONSTANTS.S3_BUCKET, Key: clave }),
+      );
+      return Number(respuesta.ContentLength ?? 0);
+    } catch {
+      throw new NotFoundException('Error al obtener el libro, intenta subirlo');
+    }
   }
 
-  /** Abre el archivo completo o el rango pedido, para responder 200 o 206. */
-  async abrir(
-    rutaRelativa: string,
-    rango?: RangoSolicitado,
-  ): Promise<ArchivoAbierto> {
-    const ruta = this.rutaAbsoluta(rutaRelativa);
-    const { size } = await stat(ruta).catch(() => {
-      throw new NotFoundException('El archivo del documento ya no está disponible.');
-    });
+  async abrir(clave: string, rango?: RangoSolicitado): Promise<ArchivoAbierto> {
+    const tamano = await this.tamano(clave);
+    const inicio = rango ? Math.min(rango.inicio, tamano - 1) : 0;
+    const fin = rango ? Math.min(rango.fin, tamano - 1) : tamano - 1;
 
-    const inicio = rango ? Math.min(rango.inicio, size - 1) : 0;
-    const fin = rango ? Math.min(rango.fin, size - 1) : size - 1;
+    try {
+      const respuesta = await this.clienteRequerido().send(
+        new GetObjectCommand({
+          Bucket: CONSTANTS.S3_BUCKET,
+          Key: clave,
+          ...(rango ? { Range: `bytes=${inicio}-${fin}` } : {}),
+        }),
+      );
 
-    return {
-      flujo: createReadStream(ruta, { start: inicio, end: fin }),
-      tamano: size,
-      inicio,
-      fin,
-      esParcial: rango !== undefined,
-    };
+      if (!respuesta.Body) throw new Error('Object Storage devolvió una respuesta vacía.');
+      return {
+        flujo: respuesta.Body as Readable,
+        tamano,
+        inicio,
+        fin,
+        esParcial: rango !== undefined,
+      };
+    } catch {
+      throw new NotFoundException('Error al obtener el libro, intenta subirlo');
+    }
   }
 
-  async eliminar(rutaRelativa: string | null): Promise<void> {
-    if (!rutaRelativa) return;
+  async eliminar(clave: string | null): Promise<void> {
+    if (!clave) return;
 
-    await rm(this.rutaAbsoluta(rutaRelativa), { force: true }).catch(
-      (error: unknown) =>
-        this.logger.warn(`No se pudo borrar ${rutaRelativa}: ${String(error)}`),
+    // Durante la validación de extensión todavía puede llegar la ruta temporal de Multer.
+    if (isAbsolute(clave)) {
+      await rm(clave, { force: true });
+      return;
+    }
+
+    await this.clienteRequerido().send(
+      new DeleteObjectCommand({ Bucket: CONSTANTS.S3_BUCKET, Key: clave }),
     );
   }
 
-  async leer(rutaRelativa: string): Promise<Buffer> {
-    return readFile(this.rutaAbsoluta(rutaRelativa));
+  async leer(clave: string): Promise<Buffer> {
+    try {
+      const respuesta = await this.clienteRequerido().send(
+        new GetObjectCommand({ Bucket: CONSTANTS.S3_BUCKET, Key: clave }),
+      );
+      if (!respuesta.Body) throw new Error('Object Storage devolvió una respuesta vacía.');
+
+      const partes: Buffer[] = [];
+      for await (const parte of respuesta.Body as AsyncIterable<Buffer | Uint8Array | string>) {
+        partes.push(Buffer.isBuffer(parte) ? parte : Buffer.from(parte));
+      }
+      return Buffer.concat(partes);
+    } catch (error) {
+      this.logger.warn(`No se pudo leer el objeto ${clave}: ${String(error)}`);
+      throw new NotFoundException('Error al obtener el libro, intenta subirlo');
+    }
   }
 
-  /** Interpreta "bytes=0-1023"; devuelve undefined si la cabecera no es usable. */
-  interpretarRango(
-    cabecera: string | undefined,
-    tamanoConocido: number,
-  ): RangoSolicitado | undefined {
+  interpretarRango(cabecera: string | undefined, tamanoConocido: number): RangoSolicitado | undefined {
     if (!cabecera) return undefined;
-
     const coincidencia = /^bytes=(\d*)-(\d*)$/.exec(cabecera.trim());
     if (!coincidencia) return undefined;
-
     const [, desde, hasta] = coincidencia;
-
-    // "bytes=-500" pide los últimos 500 bytes.
     if (desde === '') {
       const longitud = Number(hasta);
       if (!longitud) return undefined;
       return { inicio: Math.max(tamanoConocido - longitud, 0), fin: tamanoConocido - 1 };
     }
-
-    return {
-      inicio: Number(desde),
-      fin: hasta === '' ? tamanoConocido - 1 : Number(hasta),
-    };
+    return { inicio: Number(desde), fin: hasta === '' ? tamanoConocido - 1 : Number(hasta) };
   }
 
-  /** Evita que una ruta manipulada salga de UPLOAD_PATH. */
-  private rutaAbsoluta(rutaRelativa: string): string {
-    const absoluta = isAbsolute(rutaRelativa)
-      ? rutaRelativa
-      : join(this.raiz, rutaRelativa);
-    const normalizada = resolve(absoluta);
-
-    if (!normalizada.startsWith(this.raiz)) {
-      throw new NotFoundException('Ruta de archivo inválida.');
+  private crearCliente(): S3Client | null {
+    if (
+      !CONSTANTS.AWS_ENDPOINT_URL_S3 ||
+      !CONSTANTS.AWS_REGION ||
+      !CONSTANTS.AWS_ACCESS_KEY_ID ||
+      !CONSTANTS.AWS_SECRET_ACCESS_KEY ||
+      !CONSTANTS.S3_BUCKET
+    ) {
+      return null;
     }
 
-    return normalizada;
+    return new S3Client({
+      region: CONSTANTS.AWS_REGION,
+      endpoint: CONSTANTS.AWS_ENDPOINT_URL_S3,
+      credentials: {
+        accessKeyId: CONSTANTS.AWS_ACCESS_KEY_ID,
+        secretAccessKey: CONSTANTS.AWS_SECRET_ACCESS_KEY,
+      },
+      forcePathStyle: CONSTANTS.S3_FORCE_PATH_STYLE,
+      requestChecksumCalculation: 'WHEN_REQUIRED',
+    });
+  }
+
+  private clienteRequerido(): S3Client {
+    if (!this.cliente) {
+      throw new Error(
+        'Neon Object Storage no está configurado. Define AWS_ENDPOINT_URL_S3, S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION y S3_FORCE_PATH_STYLE.',
+      );
+    }
+    return this.cliente;
   }
 }

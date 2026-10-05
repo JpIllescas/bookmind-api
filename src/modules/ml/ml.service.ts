@@ -22,8 +22,20 @@ export interface ResultadoClasificacion {
   legibilidad: Record<string, number | string>;
 }
 
+export interface PaginaOcr {
+  pagina: number;
+  texto: string;
+}
+
+export interface ResultadoOcr {
+  paginas: PaginaOcr[];
+  totalPaginas: number;
+  caracteres: number;
+}
+
 /** Clasificar un libro tarda menos de un segundo. */
 const TIMEOUT_MS = 15_000;
+const OCR_TIMEOUT_MS = 10 * 60_000;
 
 /** Generadores del motor de estudio propio, con las mismas claves que el ml-service. */
 export type TipoEstudio = 'summary' | 'concepts' | 'flashcards' | 'quiz' | 'timeline';
@@ -84,6 +96,35 @@ export class MlService {
         `No se pudo contactar al clasificador en ${this.baseUrl}: ` +
           `${error instanceof Error ? error.message : String(error)}. ` +
           'El documento se guardará sin materia.',
+      );
+      return null;
+    }
+  }
+
+  /** OCR local para PDFs escaneados; null permite conservar el modo visor. */
+  async ocrPdf(buffer: Buffer): Promise<ResultadoOcr | null> {
+    if (!CONSTANTS.OCR_ENABLED) return null;
+
+    try {
+      const respuesta = await this.peticion('/ocr', {
+        method: 'POST',
+        body: JSON.stringify({
+          pdfBase64: buffer.toString('base64'),
+          idioma: CONSTANTS.OCR_LANGUAGE,
+        }),
+        timeoutMs: OCR_TIMEOUT_MS,
+      });
+
+      if (!respuesta.ok) {
+        const detalle = await respuesta.text().catch(() => '');
+        this.logger.warn(`El OCR respondió ${respuesta.status}: ${detalle.slice(0, 300)}`);
+        return null;
+      }
+
+      return (await respuesta.json()) as ResultadoOcr;
+    } catch (error) {
+      this.logger.warn(
+        `No se pudo ejecutar OCR: ${error instanceof Error ? error.message : String(error)}`,
       );
       return null;
     }

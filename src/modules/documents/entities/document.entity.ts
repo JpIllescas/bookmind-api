@@ -50,7 +50,7 @@ export class Document {
   @Column({ name: 'extracted_text', type: 'text', select: false })
   extractedText: string;
 
-  /** Ruta del archivo original dentro de UPLOAD_PATH; es lo que lee el visor. */
+  /** Clave privada del objeto original en Neon Object Storage; es lo que lee el visor. */
   @Column({ name: 'storage_path', type: 'varchar', nullable: true })
   storagePath: string | null;
 

@@ -23,6 +23,7 @@
     "migration:revert": "npm run typeorm -- migration:revert -d src/common/configuration/typeorm.config.ts"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1146.0",
     "@google/genai": "^2.16.0",
     "@huggingface/transformers": "^4.2.0",
     "@nestjs/common": "^11.0.1",

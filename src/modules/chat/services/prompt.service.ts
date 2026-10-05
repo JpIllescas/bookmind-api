@@ -84,13 +84,20 @@ ${libro.contenido}
   construirBiblioteca(
     pasajes: { titulo: string; pagina: number; texto: string }[],
     preferencias: PreferenciasEstudio | null,
+    idioma: 'es' | 'en' = 'es',
   ): string {
     const fuentes = pasajes
       .map((p) => `[${p.titulo} · pág. ${p.pagina}]\n${p.texto}`)
       .join('\n\n');
 
-    return `Eres el asistente de estudio de BookMind. El estudiante pregunta sin tener
-un libro abierto: buscas la respuesta entre los pasajes de SUS libros.
+     const idiomaRespuesta = idioma === 'en'
+       ? 'Answer exclusively in English. Keep book titles and quoted source text in their original language.'
+       : 'Responde exclusivamente en español. Conserva los títulos de los libros y las citas textuales en su idioma original.';
+
+     return `Eres el asistente de estudio de BookMind. El estudiante pregunta sin tener
+     un libro abierto: buscas la respuesta entre los pasajes de SUS libros.
+
+  Idioma de respuesta: ${idiomaRespuesta}
 
  Así estudia este alumno, y así debes responderle:
  ${this.instruccionChat(preferencias)}

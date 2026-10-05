@@ -1,8 +1,11 @@
-import { IsString, MaxLength, MinLength } from 'class-validator';
+import { IsIn, IsString, MaxLength, MinLength } from 'class-validator';
 
 export class PreguntarBibliotecaDto {
   @IsString()
   @MinLength(3, { message: 'Escribe al menos unas palabras.' })
   @MaxLength(500, { message: 'La pregunta no puede pasar de 500 caracteres.' })
   pregunta: string;
+
+  @IsIn(['es', 'en'], { message: 'El idioma debe ser es o en.' })
+  idioma: 'es' | 'en';
 }

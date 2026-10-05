@@ -8,6 +8,7 @@ import { DocumentsModule } from '../documents/documents.module';
 import { UsersModule } from '../users/users.module';
 import { AsistenteController } from './asistente.controller';
 import { ChatController } from './chat.controller';
+import { CompartirController } from './compartir.controller';
 import { ChatService } from './chat.service';
 import { ChatMessage } from './entities/chat-message.entity';
 import { Conversation } from './entities/conversation.entity';
@@ -50,7 +51,7 @@ const proveedorLlm: Provider = {
     AnclajeModule,
     UsersModule,
   ],
-  controllers: [ChatController, AsistenteController],
+  controllers: [ChatController, AsistenteController, CompartirController],
   providers: [
     ChatService,
     ConversacionesService,

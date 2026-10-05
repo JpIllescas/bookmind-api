@@ -106,7 +106,7 @@ export class AuthService {
     const coincide = await bcrypt.compare(dto.password, hash);
 
     if (!usuario || !coincide) {
-      throw new UnauthorizedException('Correo o contraseña incorrectos.');
+      throw new UnauthorizedException('Contraseña o correo no correctos');
     }
 
     return this.construirRespuesta(usuario);

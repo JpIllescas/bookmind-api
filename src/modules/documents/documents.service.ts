@@ -50,8 +50,8 @@ export class DocumentsService implements OnApplicationBootstrap {
     try {
       tipo = this.detectarTipo(archivo);
     } catch (error) {
-      // El archivo ya está en disco cuando se valida la extensión.
-      await this.almacenamiento.eliminar(archivo.path);
+      // Con memoryStorage no hay archivo local que limpiar; el fallback cubre tests legados.
+      if (archivo.path) await this.almacenamiento.eliminar(archivo.path);
       throw error;
     }
 
@@ -78,8 +78,13 @@ export class DocumentsService implements OnApplicationBootstrap {
       }),
     );
 
+    const contenido = archivo.buffer ?? archivo.path;
+    if (!contenido) {
+      throw new BadRequestException('No se pudo leer el archivo recibido.');
+    }
+
     documento.storagePath = await this.almacenamiento.guardarDefinitivo(
-      archivo.path,
+      contenido,
       userId,
       documento.id,
       tipo,
@@ -123,10 +128,30 @@ export class DocumentsService implements OnApplicationBootstrap {
     try {
       const buffer = await this.almacenamiento.leer(documento.storagePath!);
 
-      const { paginas, textoCompleto, totalPaginas, capaTexto, capitulos } =
+      let { paginas, textoCompleto, totalPaginas, capaTexto, capitulos } =
         await this.extraccion.extraer(buffer, documento.type);
 
-      // Un escaneo se puede leer en el visor, pero no hay texto que clasificar ni indexar.
+      // Convierte una sola vez el escaneo a texto; el chat nunca necesita reenviar imágenes.
+      if (capaTexto === 'sin_texto') {
+        const ocr =
+          documento.type === TipoDocumento.PDF &&
+          typeof this.ml.ocrPdf === 'function'
+            ? await this.ml.ocrPdf(buffer)
+            : null;
+
+        if (ocr && ocr.caracteres >= 200) {
+          paginas = ocr.paginas;
+          totalPaginas = ocr.totalPaginas;
+          textoCompleto = paginas
+            .map((pagina) => pagina.texto.trim())
+            .filter(Boolean)
+            .join('\n\n');
+          capaTexto = 'ok';
+          this.logger.log(`OCR completado para "${documento.title}": ${ocr.caracteres} caracteres.`);
+        }
+      }
+
+      // Si el OCR no está disponible, se puede leer en el visor, pero no se clasifica ni indexa.
       if (capaTexto === 'sin_texto') {
         await this.documentos.update(documento.id, {
           pages: totalPaginas,

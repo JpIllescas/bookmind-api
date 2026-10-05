@@ -31,6 +31,10 @@ export class Conversation {
   @Column({ name: 'user_id' })
   userId: string;
 
+  /** Token aleatorio para compartir en modo público y solo lectura. */
+  @Column({ name: 'share_token', type: 'varchar', length: 64, nullable: true, unique: true })
+  shareToken: string | null;
+
   @ManyToOne(() => User, { onDelete: 'CASCADE', nullable: false })
   @JoinColumn({ name: 'user_id' })
   user: User;

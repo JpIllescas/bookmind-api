@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
+import { randomBytes } from 'node:crypto';
 
 import { RolMensaje } from '../../../common/enums/rol-mensaje.enum';
 import { DocumentsService } from '../../documents/documents.service';
@@ -18,6 +19,13 @@ export interface ResumenConversacion {
   ultimoMensaje: string | null;
   createdAt: Date;
   updatedAt: Date;
+  shareToken?: string | null;
+}
+
+export interface ConversacionPublica {
+  titulo: string;
+  libro: string;
+  mensajes: Array<{ role: RolMensaje; content: string; createdAt: Date }>;
 }
 
 /** Sesiones de chat de un libro: crear, listar, renombrar y borrar. */
@@ -66,7 +74,40 @@ export class ConversacionesService {
       ultimoMensaje: ultimos[i] ? this.recortar(ultimos[i].content, 90) : null,
       createdAt: fila.createdAt,
       updatedAt: fila.updatedAt,
+      shareToken: null,
     }));
+  }
+
+  async compartir(userId: string, documentId: string, id: string): Promise<{ token: string }> {
+    const conversacion = await this.obtener(userId, documentId, id);
+    conversacion.shareToken ??= randomBytes(32).toString('hex');
+    await this.conversaciones.save(conversacion);
+    return { token: conversacion.shareToken };
+  }
+
+  async revocarCompartir(userId: string, documentId: string, id: string): Promise<void> {
+    const conversacion = await this.obtener(userId, documentId, id);
+    conversacion.shareToken = null;
+    await this.conversaciones.save(conversacion);
+  }
+
+  async publica(token: string): Promise<ConversacionPublica> {
+    const conversacion = await this.conversaciones.findOne({
+      where: { shareToken: token },
+      relations: { document: true },
+    });
+    if (!conversacion) throw new NotFoundException('Este enlace ya no está disponible.');
+
+    const mensajes = await this.mensajes.find({
+      where: { conversationId: conversacion.id },
+      order: { createdAt: 'ASC' },
+      select: { role: true, content: true, createdAt: true },
+    });
+    return {
+      titulo: conversacion.titulo,
+      libro: conversacion.document.title,
+      mensajes: mensajes.map(({ role, content, createdAt }) => ({ role, content, createdAt })),
+    };
   }
 
   async crear(userId: string, documentId: string, titulo?: string): Promise<Conversation> {

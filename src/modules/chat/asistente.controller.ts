@@ -46,9 +46,9 @@ export class AsistenteController {
 
     if (utiles.length === 0) {
       return {
-        respuesta:
-          'No encontré nada sobre eso en tus libros. Prueba con otras palabras, ' +
-          'o sube el libro donde crees que está.',
+        respuesta: dto.idioma === 'en'
+          ? 'I could not find anything about that in your books. Try different words or upload the book where you think it appears.'
+          : 'No encontré nada sobre eso en tus libros. Prueba con otras palabras, o sube el libro donde crees que está.',
         fuentes: [],
       };
     }
@@ -56,7 +56,7 @@ export class AsistenteController {
     const preferencias = await this.usuarios.obtenerPreferencias(usuario.id);
 
     const respuesta = await this.llm.responder({
-      systemPrompt: this.prompts.construirBiblioteca(utiles, preferencias),
+      systemPrompt: this.prompts.construirBiblioteca(utiles, preferencias, dto.idioma),
       historial: [],
       mensaje: dto.pregunta,
     });

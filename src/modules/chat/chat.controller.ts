@@ -159,4 +159,23 @@ export class ChatController {
   ) {
     return this.conversaciones.eliminar(usuario.id, documentId, id);
   }
+
+  @Post(':documentId/conversaciones/:id/share')
+  compartir(
+    @CurrentUser() usuario: AuthUser,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.conversaciones.compartir(usuario.id, documentId, id);
+  }
+
+  @Delete(':documentId/conversaciones/:id/share')
+  @HttpCode(204)
+  revocarCompartir(
+    @CurrentUser() usuario: AuthUser,
+    @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Param('id', ParseUUIDPipe) id: string,
+  ) {
+    return this.conversaciones.revocarCompartir(usuario.id, documentId, id);
+  }
 }
