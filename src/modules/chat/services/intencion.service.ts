@@ -10,6 +10,8 @@ export type MaterialPedido =
   | TipoBloque.Glossary
   | TipoBloque.Timeline;
 
+export type TipoDiagramaPedido = 'mind_map' | 'concept_map';
+
 /** Verbos con los que un estudiante pide que le preparen algo. */
 const PETICION =
   /\b(hazme|haz|hacer|generame|génerame|genera|generar|creame|créame|crear|dame|quiero|necesito|prepara|preparame|prepárame|arma|armame|ármame|ponme|pon)\b/;
@@ -41,12 +43,25 @@ const MATERIALES: [RegExp, MaterialPedido][] = [
 /** Sin verbo de petición, solo se acepta un mensaje telegráfico ("ahora flashcards"). */
 const PALABRAS_SIN_VERBO = 4;
 
+const PETICION_DIAGRAMA =
+  /\b(mapa mental|mapa de ideas|mapa conceptual|mapa de conceptos)\b/;
+
 /**
  * Reconoce cuándo el estudiante pide un material en vez de hacer una pregunta.
  * Es el hueco donde entrará el clasificador de intención entrenado.
  */
 @Injectable()
 export class IntencionService {
+  detectarDiagrama(mensaje: string): TipoDiagramaPedido | null {
+    const texto = mensaje.toLowerCase().trim();
+    const pide = PETICION.test(texto) || texto.split(/\s+/).length <= PALABRAS_SIN_VERBO;
+
+    if (!pide || !PETICION_DIAGRAMA.test(texto)) return null;
+    return /\b(mapa conceptual|mapa de conceptos)\b/.test(texto)
+      ? 'concept_map'
+      : 'mind_map';
+  }
+
   /** Devuelve los materiales pedidos en el orden en que el estudiante los nombra. */
   detectar(mensaje: string): MaterialPedido[] {
     const texto = mensaje.toLowerCase().trim();

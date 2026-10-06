@@ -177,6 +177,27 @@ export class GeminiProvider implements LlmProvider {
       );
     }
 
+    if (
+      mensaje.includes('401') ||
+      mensaje.includes('UNAUTHENTICATED') ||
+      mensaje.includes('ACCESS_TOKEN_TYPE_UNSUPPORTED') ||
+      mensaje.toLowerCase().includes('invalid authentication')
+    ) {
+      return new ServiceUnavailableException(
+        'La credencial de Gemini no es válida. Configura una API key de Google AI Studio.',
+      );
+    }
+
+    if (
+      mensaje.includes('403') ||
+      mensaje.includes('PERMISSION_DENIED') ||
+      mensaje.toLowerCase().includes('denied access')
+    ) {
+      return new ServiceUnavailableException(
+        'El proyecto de Gemini no tiene acceso habilitado. Revisa el proyecto asociado a la API key en Google AI Studio.',
+      );
+    }
+
     if (this.esSaturacion(error)) {
       return new ServiceUnavailableException(
         'El modelo está saturado ahora mismo. Vuelve a intentarlo en unos segundos.',

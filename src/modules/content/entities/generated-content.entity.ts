@@ -1,6 +1,13 @@
 import { Column, CreateDateColumn, Entity, Index, PrimaryGeneratedColumn } from 'typeorm';
 
-export type GeneratedContentType = 'summary' | 'flashcards' | 'quiz' | 'glossary' | 'timeline';
+export type GeneratedContentType =
+  | 'summary'
+  | 'flashcards'
+  | 'quiz'
+  | 'glossary'
+  | 'timeline'
+  | 'mind_map'
+  | 'concept_map';
 
 @Entity('generated_contents')
 @Index(['documentId', 'type'])

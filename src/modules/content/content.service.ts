@@ -70,7 +70,8 @@ export type Material =
   | { tarjetas: Tarjeta[]; descartadas?: number }
   | { preguntas: PreguntaQuiz[]; descartadas?: number }
   | { terminos: Termino[] }
-  | { eventos: Evento[] };
+  | { eventos: Evento[] }
+  | { diagram: { type: 'mind_map' | 'concept_map'; title: string; nodes: unknown[]; edges: unknown[] } };
 
 /** Quién produjo lo que se muestra: el motor propio o Gemini a partir de él. */
 export type Origen = 'motor' | 'gemini';
@@ -86,7 +87,7 @@ interface Anclados<T> {
 /** Los tipos que Gemini sabe producir solo desde el texto, cuando el motor no responde. */
 const CON_RESPALDO_GEMINI: GeneratedContentType[] = ['summary', 'flashcards', 'quiz'];
 
-const GENERADOR_POR_TIPO: Record<GeneratedContentType, TipoEstudio> = {
+const GENERADOR_POR_TIPO: Partial<Record<GeneratedContentType, TipoEstudio>> = {
   summary: 'summary',
   flashcards: 'flashcards',
   quiz: 'quiz',
@@ -119,9 +120,14 @@ export class ContentService {
    * redacta mejor. Si el motor no responde, Gemini lo genera desde el texto y
    * el verificador de anclaje descarta lo que no se apoye en el libro.
    */
-  async generar(userId: string, documentId: string, type: GeneratedContentType) {
+  async generar(userId: string, documentId: string, type: GeneratedContentType, idioma: 'es' | 'en' = 'es') {
     const document = await this.documents.obtenerConTexto(userId, documentId);
     const preferencias = await this.users.obtenerPreferencias(userId);
+
+    if (type === 'mind_map' || type === 'concept_map') {
+      const content = await this.generarDiagrama(type, document, preferencias, idioma);
+      return this.contents.save(this.contents.create({ documentId, userId, type, content }));
+    }
 
     const paginas = await this.capitulos.paginasDe(documentId);
     const motor =
@@ -215,7 +221,7 @@ export class ContentService {
   ): Promise<Material | null> {
     if (paginas.length === 0) return null;
 
-    const resultado = await this.ml.estudio<any>(GENERADOR_POR_TIPO[type], paginas);
+    const resultado = await this.ml.estudio<any>(GENERADOR_POR_TIPO[type]!, paginas);
     if (!resultado) return null;
 
     const items = resultado.items ?? [];
@@ -261,6 +267,65 @@ export class ContentService {
           })),
         };
     }
+
+    return null;
+  }
+
+  private async generarDiagrama(
+    type: 'mind_map' | 'concept_map',
+    document: Document,
+    preferencias: PreferenciasEstudio | null,
+    idioma: 'es' | 'en',
+  ): Promise<Contenido> {
+    const contexto = await this.contexto.representativo(document.id, document.extractedText);
+    const clase = type === 'mind_map' ? 'mind map' : 'concept map';
+    const tituloPorDefecto = idioma === 'en'
+      ? clase
+      : type === 'mind_map' ? 'mapa mental' : 'mapa conceptual';
+    const idiomaRespuesta = idioma === 'en' ? 'Answer exclusively in English.' : 'Responde exclusivamente en español.';
+    const respuesta = await this.llm.responder({
+      systemPrompt:
+        `Genera un ${clase} sobre el libro usando únicamente el texto proporcionado. ${idiomaRespuesta} ` +
+        'Devuelve SOLO JSON válido, sin Markdown ni bloques de código, con esta forma exacta: ' +
+        `{"type":"${type}","title":"...","nodes":[{"id":"n1","label":"...","type":"root"}],"edges":[{"source":"n1","target":"n2","label":"..."}]}. ` +
+        'Usa entre 5 y 12 nodos, IDs únicos, un nodo root y conexiones dirigidas válidas. ' +
+        'Para un mapa mental parte de un tema central; para un mapa conceptual prioriza relaciones etiquetadas. ' +
+        'Las etiquetas deben ser breves. No inventes información. ' +
+        `Adapta el nivel a: ${this.prompts.instruccionPreferencias(preferencias)}\n` +
+        'Texto del libro:\n' + contexto.contenido,
+      historial: [],
+      mensaje: `Genera el ${clase} en JSON.`,
+    });
+
+    const datos = this.comoObjetoJson(respuesta);
+    const ids = new Set<string>();
+    const nodes = (Array.isArray(datos.nodes) ? datos.nodes : [])
+      .map((node: any, index: number) => ({
+        id: String(node?.id ?? `n${index + 1}`),
+        label: String(node?.label ?? '').trim(),
+        type: String(node?.type ?? 'concept'),
+      }))
+      .filter((node: any) => node.label && !ids.has(node.id) && ids.add(node.id));
+    const edges = (Array.isArray(datos.edges) ? datos.edges : [])
+      .map((edge: any) => ({
+        source: String(edge?.source ?? ''),
+        target: String(edge?.target ?? ''),
+        label: edge?.label ? String(edge.label) : undefined,
+      }))
+      .filter((edge: any) => ids.has(edge.source) && ids.has(edge.target) && edge.source !== edge.target);
+
+    if (nodes.length < 2 || edges.length === 0) throw this.malFormato();
+    if (!nodes.some((node: any) => node.type === 'root')) nodes[0].type = 'root';
+
+    return {
+      diagram: {
+        type,
+        title: String(datos.title ?? tituloPorDefecto),
+        nodes,
+        edges,
+      },
+      origen: 'gemini',
+    } as Contenido;
   }
 
   // --- Gemini como mejora opcional ---
@@ -558,6 +623,21 @@ export class ContentService {
       const datos: unknown = JSON.parse(limpio);
       if (!Array.isArray(datos)) throw this.malFormato();
       return datos;
+    } catch {
+      throw this.malFormato();
+    }
+  }
+
+  private comoObjetoJson(crudo: string): Record<string, any> {
+    const limpio = crudo
+      .replace(/^```json\s*/i, '')
+      .replace(/^```\s*/i, '')
+      .replace(/```\s*$/, '')
+      .trim();
+    try {
+      const datos: unknown = JSON.parse(limpio);
+      if (!datos || typeof datos !== 'object' || Array.isArray(datos)) throw this.malFormato();
+      return datos as Record<string, any>;
     } catch {
       throw this.malFormato();
     }

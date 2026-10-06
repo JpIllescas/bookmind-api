@@ -35,7 +35,7 @@ export class ContentController {
     @Param('documentId', ParseUUIDPipe) documentId: string,
     @Body() dto: GenerateContentDto,
   ) {
-    return this.content.generar(usuario.id, documentId, dto.type);
+    return this.content.generar(usuario.id, documentId, dto.type, dto.idioma);
   }
 
   @Get('intentos')

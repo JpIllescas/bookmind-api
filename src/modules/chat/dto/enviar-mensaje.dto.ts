@@ -1,4 +1,4 @@
-import { IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID, MaxLength, MinLength } from 'class-validator';
 
 export class EnviarMensajeDto {
   @IsUUID()
@@ -14,4 +14,8 @@ export class EnviarMensajeDto {
   // Un mensaje mucho más largo que esto no es una pregunta sobre el libro.
   @MaxLength(2000)
   message: string;
+
+  @IsOptional()
+  @IsIn(['es', 'en'])
+  idioma?: 'es' | 'en';
 }

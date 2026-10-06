@@ -8,6 +8,7 @@ import {
   ParseUUIDPipe,
   Patch,
   Post,
+  Query,
   Req,
   Res,
   UseGuards,
@@ -35,7 +36,7 @@ export class ChatController {
 
   @Post()
   enviar(@CurrentUser() usuario: AuthUser, @Body() dto: EnviarMensajeDto) {
-    return this.chat.responder(usuario.id, dto.documentId, dto.message, dto.conversationId);
+    return this.chat.responder(usuario.id, dto.documentId, dto.message, dto.conversationId, dto.idioma);
   }
 
   /**
@@ -71,6 +72,7 @@ export class ChatController {
         emitir,
         control.signal,
         dto.conversationId,
+        dto.idioma,
       );
     } catch (error) {
       emitir({
@@ -89,16 +91,18 @@ export class ChatController {
   acciones(
     @CurrentUser() usuario: AuthUser,
     @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Query('idioma') idioma: 'es' | 'en' = 'es',
   ) {
-    return this.chat.accionesRapidas(usuario.id, documentId);
+    return this.chat.accionesRapidas(usuario.id, documentId, idioma);
   }
 
   @Get(':documentId/sugerencias')
   sugerencias(
     @CurrentUser() usuario: AuthUser,
     @Param('documentId', ParseUUIDPipe) documentId: string,
+    @Query('idioma') idioma: 'es' | 'en' = 'es',
   ) {
-    return this.chat.sugerencias(usuario.id, documentId);
+    return this.chat.sugerencias(usuario.id, documentId, idioma);
   }
 
   // --- Conversaciones (sesiones de chat) ---

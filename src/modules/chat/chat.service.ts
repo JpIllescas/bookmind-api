@@ -16,7 +16,7 @@ import { Conversation } from './entities/conversation.entity';
 import { LLM_PROVIDER, streamDesdeRespuesta } from './providers/llm-provider.interface';
 import type { LlmProvider } from './providers/llm-provider.interface';
 import { ConversacionesService } from './services/conversaciones.service';
-import { MaterialPedido, IntencionService } from './services/intencion.service';
+import { MaterialPedido, IntencionService, TipoDiagramaPedido } from './services/intencion.service';
 import { PromptService } from './services/prompt.service';
 
 // Por encima de esto se recupera por fragmentos; hasta aquí el modelo lee el libro entero.
@@ -34,6 +34,13 @@ const AVISO_MATERIAL: Record<MaterialPedido, string> = {
   [TipoBloque.Quiz]: 'Estoy preparando tu quiz en el Studio.',
   [TipoBloque.Glossary]: 'Estoy preparando el glosario en el Studio.',
   [TipoBloque.Timeline]: 'Estoy preparando la línea de tiempo en el Studio.',
+};
+const AVISO_MATERIAL_EN: Record<MaterialPedido, string> = {
+  [TipoBloque.Summary]: 'I am preparing the summary in Studio.',
+  [TipoBloque.Flashcards]: 'I am preparing your flashcards in Studio.',
+  [TipoBloque.Quiz]: 'I am preparing your quiz in Studio.',
+  [TipoBloque.Glossary]: 'I am preparing the glossary in Studio.',
+  [TipoBloque.Timeline]: 'I am preparing the timeline in Studio.',
 };
 
 export interface RespuestaChat {
@@ -86,15 +93,16 @@ export class ChatService {
     documentId: string,
     mensaje: string,
     conversationId?: string,
+    idioma: 'es' | 'en' = 'es',
   ): Promise<RespuestaChat> {
     const conversacion = await this.resolverConversacion(userId, documentId, conversationId);
     const materiales = this.intencion.detectar(mensaje);
 
     if (materiales.length > 0) {
-      return this.pedirMaterial(userId, conversacion, mensaje, materiales);
+      return this.pedirMaterial(userId, conversacion, mensaje, materiales, idioma);
     }
 
-    const turno = await this.prepararTurno(userId, conversacion, mensaje);
+    const turno = await this.prepararTurno(userId, conversacion, mensaje, this.intencion.detectarDiagrama(mensaje), idioma);
     const respuesta = await this.llm.responder(this.peticionDe(turno, mensaje));
     const guardada = await this.cerrarTurno(userId, conversacion, mensaje, respuesta);
 
@@ -121,12 +129,13 @@ export class ChatService {
     emitir: (evento: EventoChat) => void,
     senal: AbortSignal,
     conversationId?: string,
+    idioma: 'es' | 'en' = 'es',
   ): Promise<void> {
     const conversacion = await this.resolverConversacion(userId, documentId, conversationId);
     const materiales = this.intencion.detectar(mensaje);
 
     if (materiales.length > 0) {
-      const respuesta = await this.pedirMaterial(userId, conversacion, mensaje, materiales);
+      const respuesta = await this.pedirMaterial(userId, conversacion, mensaje, materiales, idioma);
       emitir({ tipo: 'inicio', conversationId: conversacion.id, mensajeUsuarioId: '' });
       emitir({ tipo: 'material', blockType: materiales[0] });
       emitir({ tipo: 'token', texto: respuesta.response });
@@ -134,7 +143,7 @@ export class ChatService {
       return;
     }
 
-    const turno = await this.prepararTurno(userId, conversacion, mensaje);
+    const turno = await this.prepararTurno(userId, conversacion, mensaje, this.intencion.detectarDiagrama(mensaje), idioma);
 
     const mensajeUsuario = await this.mensajes.save(
       this.mensajes.create({
@@ -201,16 +210,19 @@ export class ChatService {
     });
   }
 
-  async accionesRapidas(userId: string, documentId: string): Promise<string[]> {
+  async accionesRapidas(userId: string, documentId: string, idioma: 'es' | 'en' = 'es'): Promise<string[]> {
     const documento = await this.documentos.obtener(userId, documentId);
-    return ACCIONES_POR_MATERIA[documento.materia ?? Materia.Otro];
+    const acciones = ACCIONES_POR_MATERIA[documento.materia ?? Materia.Otro];
+    return idioma === 'en'
+      ? acciones.map((accion) => this.traducirAccion(accion))
+      : acciones;
   }
 
   /**
    * Preguntas para arrancar, armadas desde los capítulos del libro: no gastan
    * cuota y llevan al estudiante a las partes concretas del texto.
    */
-  async sugerencias(userId: string, documentId: string): Promise<string[]> {
+  async sugerencias(userId: string, documentId: string, idioma: 'es' | 'en' = 'es'): Promise<string[]> {
     const documento = await this.documentos.obtener(userId, documentId);
     const capitulos = await this.capitulos.listar(documentId);
 
@@ -226,7 +238,27 @@ export class ChatService {
       .slice(0, 6)
       .map((c) => `Resume y explica "${nombreDeCapitulo(c)}"`);
 
-    return [...generales, ...desdeCapitulos].slice(0, 6);
+    const resultado = [...generales, ...desdeCapitulos].slice(0, 6);
+    return idioma === 'en' ? resultado.map((sugerencia) => this.traducirSugerencia(sugerencia)) : resultado;
+  }
+
+  private traducirAccion(accion: string): string {
+    const traducciones: Record<string, string> = {
+      'Hazme un resumen': 'Give me a summary',
+      'Crea flashcards': 'Create flashcards',
+      'Prepárame un quiz': 'Create a quiz for me',
+      'Explícame los conceptos clave': 'Explain the key concepts',
+    };
+    return traducciones[accion] ?? accion;
+  }
+
+  private traducirSugerencia(sugerencia: string): string {
+    return sugerencia
+      .replace('¿De qué trata', 'What is')
+      .replace('en pocas palabras?', 'about in a few words?')
+      .replace('Explícame las ideas más importantes del libro y cómo se relacionan', 'Explain the most important ideas in the book and how they relate')
+      .replace('¿Qué debería recordar de este libro para un examen?', 'What should I remember from this book for an exam?')
+      .replace('Resume y explica', 'Summarize and explain');
   }
 
   // --- Piezas del turno ---
@@ -245,6 +277,8 @@ export class ChatService {
     userId: string,
     conversacion: Conversation,
     mensaje: string,
+    diagrama: TipoDiagramaPedido | null = null,
+    idioma: 'es' | 'en' = 'es',
   ): Promise<Turno> {
     const documento = await this.documentos.obtenerConTexto(userId, conversacion.documentId);
     const preferencias = await this.usuarios.obtenerPreferencias(userId);
@@ -262,6 +296,8 @@ export class ChatService {
       contenido,
       esParcial,
       preferencias,
+      diagrama: diagrama ?? undefined,
+      idioma,
     });
 
     const historial = await this.historialReciente(conversacion.id);
@@ -328,6 +364,7 @@ export class ChatService {
     conversacion: Conversation,
     mensaje: string,
     tipos: MaterialPedido[],
+    idioma: 'es' | 'en' = 'es',
   ): Promise<RespuestaChat> {
     const [tipo, ...resto] = tipos;
 
@@ -349,7 +386,7 @@ export class ChatService {
         userId,
         role: RolMensaje.Assistant,
         content:
-          AVISO_MATERIAL[tipo] +
+          (idioma === 'en' ? AVISO_MATERIAL_EN : AVISO_MATERIAL)[tipo] +
           // Solo se prepara uno: cada material es una generación aparte.
           (resto.length > 0 ? ' Lo demás lo puedes pedir desde el Studio.' : ''),
         blockType: tipo,
