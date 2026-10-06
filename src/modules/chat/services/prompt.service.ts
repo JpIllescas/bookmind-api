@@ -21,6 +21,7 @@ export interface ContextoLibro {
   preferencias: PreferenciasEstudio | null;
   diagrama?: 'mind_map' | 'concept_map';
   idioma?: 'es' | 'en';
+  modo?: 'tutor';
 }
 
 /** Registro para documentos que no son material escolar reconocido. */
@@ -42,6 +43,9 @@ export class PromptService {
       : 'este documento';
     const nivel = esEscolar && libro.nivel ? NIVEL_LEGIBLE[libro.nivel] : null;
     const registro = this.registro(esEscolar, libro.nivel);
+    const modoTutor = libro.modo === 'tutor'
+      ? '\nMODO TUTOR: La respuesta de este turno DEBE ser una sola pregunta concreta para el estudiante, no un resumen ni una explicación extensa. Después, en los siguientes turnos, evalúa la respuesta antes de continuar. Si se equivoca, ofrece primero una pista breve y no reveles la respuesta inmediatamente. Ajusta la dificultad y termina cada turno con una pregunta concreta. Usa únicamente el libro y cita la página.\n'
+      : '';
 
     const aviso = libro.esParcial
       ? '\nNOTA: recibes solo los fragmentos más relevantes del libro, no el ' +
@@ -57,6 +61,7 @@ export class PromptService {
 Trabajas EXCLUSIVAMENTE sobre ${materia}, titulado "${libro.titulo}".
 
  Idioma de respuesta: ${idiomaRespuesta}
+${modoTutor}
 
  Así estudia este alumno, y así debes responderle:
  ${this.instruccionChat(libro.preferencias)}

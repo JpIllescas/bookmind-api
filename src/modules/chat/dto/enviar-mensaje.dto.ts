@@ -18,4 +18,8 @@ export class EnviarMensajeDto {
   @IsOptional()
   @IsIn(['es', 'en'])
   idioma?: 'es' | 'en';
+
+  @IsOptional()
+  @IsIn(['tutor'])
+  modo?: 'tutor';
 }

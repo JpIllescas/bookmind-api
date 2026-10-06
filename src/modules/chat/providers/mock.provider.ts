@@ -27,6 +27,14 @@ export class MockProvider implements LlmProvider {
 
     const elegidas = frases.slice(0, 3).join(' ');
 
+    if (peticion.systemPrompt.includes('MODO TUTOR')) {
+      const ingles = peticion.systemPrompt.includes('Answer exclusively in English');
+      const base = frases[0] ?? elegidas;
+      return ingles
+        ? `Tutor question: Based on the book, what is the main idea of this passage? "${base}"`
+        : `Pregunta del tutor: Según el libro, ¿cuál es la idea principal de este pasaje? "${base}"`;
+    }
+
     return (
       `Sobre "${peticion.mensaje}", esto es lo que dice el libro. ` +
       `${elegidas} ` +

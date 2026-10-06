@@ -70,6 +70,11 @@ export const CONSTANTS = {
   GEMINI_MODEL: configService.get<string>('GEMINI_MODEL') ?? 'gemini-2.5-flash',
   GEMINI_CONTEXT_CACHING:
     (configService.get<string>('GEMINI_CONTEXT_CACHING') ?? 'false') === 'true',
+  ELEVENLABS_API_KEY: configService.get<string>('ELEVENLABS_API_KEY') ?? '',
+  ELEVENLABS_VOICE_ID:
+    configService.get<string>('ELEVENLABS_VOICE_ID') ?? 'EXAVITQu4vr4xnSDxMaL',
+  ELEVENLABS_MODEL:
+    configService.get<string>('ELEVENLABS_MODEL') ?? 'eleven_multilingual_v2',
   OLLAMA_BASE_URL:
     configService.get<string>('OLLAMA_BASE_URL') ?? 'http://localhost:11434',
   OLLAMA_MODEL: configService.get<string>('OLLAMA_MODEL') ?? 'llama3.1:8b',

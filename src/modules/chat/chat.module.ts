@@ -20,6 +20,7 @@ import { ConversacionesService } from './services/conversaciones.service';
 import { IntencionService } from './services/intencion.service';
 import { MetricasLlmService } from './services/metricas-llm.service';
 import { PromptService } from './services/prompt.service';
+import { ElevenLabsService } from './services/elevenlabs.service';
 
 const proveedorLlm: Provider = {
   provide: LLM_PROVIDER,
@@ -60,6 +61,7 @@ const proveedorLlm: Provider = {
     IntencionService,
     MetricasLlmService,
     proveedorLlm,
+    ElevenLabsService,
   ],
   exports: [LLM_PROVIDER, PromptService, ContextoService],
 })

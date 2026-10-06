@@ -22,6 +22,8 @@ import type { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { ChatService, EventoChat } from './chat.service';
 import { CrearConversacionDto, RenombrarConversacionDto } from './dto/conversacion.dto';
 import { EnviarMensajeDto } from './dto/enviar-mensaje.dto';
+import { SpeechDto } from './dto/speech.dto';
+import { ElevenLabsService } from './services/elevenlabs.service';
 import { ConversacionesService } from './services/conversaciones.service';
 
 @ApiTags('chat')
@@ -32,11 +34,21 @@ export class ChatController {
   constructor(
     private readonly chat: ChatService,
     private readonly conversaciones: ConversacionesService,
+    private readonly elevenlabs: ElevenLabsService,
   ) {}
 
   @Post()
   enviar(@CurrentUser() usuario: AuthUser, @Body() dto: EnviarMensajeDto) {
     return this.chat.responder(usuario.id, dto.documentId, dto.message, dto.conversationId, dto.idioma);
+  }
+
+  @Post('speech')
+  async speech(@Body() dto: SpeechDto, @Res() respuesta: Response) {
+    const audio = await this.elevenlabs.sintetizar(dto.text, dto.idioma);
+    respuesta.setHeader('Content-Type', 'audio/mpeg');
+    respuesta.setHeader('Content-Length', audio.length);
+    respuesta.setHeader('Cache-Control', 'private, max-age=3600');
+    respuesta.end(audio);
   }
 
   /**
@@ -73,6 +85,7 @@ export class ChatController {
         control.signal,
         dto.conversationId,
         dto.idioma,
+        dto.modo,
       );
     } catch (error) {
       emitir({

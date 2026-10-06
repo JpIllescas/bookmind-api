@@ -94,6 +94,7 @@ export class ChatService {
     mensaje: string,
     conversationId?: string,
     idioma: 'es' | 'en' = 'es',
+    modo: 'tutor' | undefined = undefined,
   ): Promise<RespuestaChat> {
     const conversacion = await this.resolverConversacion(userId, documentId, conversationId);
     const materiales = this.intencion.detectar(mensaje);
@@ -102,7 +103,7 @@ export class ChatService {
       return this.pedirMaterial(userId, conversacion, mensaje, materiales, idioma);
     }
 
-    const turno = await this.prepararTurno(userId, conversacion, mensaje, this.intencion.detectarDiagrama(mensaje), idioma);
+    const turno = await this.prepararTurno(userId, conversacion, mensaje, this.intencion.detectarDiagrama(mensaje), idioma, modo);
     const respuesta = await this.llm.responder(this.peticionDe(turno, mensaje));
     const guardada = await this.cerrarTurno(userId, conversacion, mensaje, respuesta);
 
@@ -130,6 +131,7 @@ export class ChatService {
     senal: AbortSignal,
     conversationId?: string,
     idioma: 'es' | 'en' = 'es',
+    modo: 'tutor' | undefined = undefined,
   ): Promise<void> {
     const conversacion = await this.resolverConversacion(userId, documentId, conversationId);
     const materiales = this.intencion.detectar(mensaje);
@@ -143,7 +145,7 @@ export class ChatService {
       return;
     }
 
-    const turno = await this.prepararTurno(userId, conversacion, mensaje, this.intencion.detectarDiagrama(mensaje), idioma);
+    const turno = await this.prepararTurno(userId, conversacion, mensaje, this.intencion.detectarDiagrama(mensaje), idioma, modo);
 
     const mensajeUsuario = await this.mensajes.save(
       this.mensajes.create({
@@ -279,6 +281,7 @@ export class ChatService {
     mensaje: string,
     diagrama: TipoDiagramaPedido | null = null,
     idioma: 'es' | 'en' = 'es',
+    modo: 'tutor' | undefined = undefined,
   ): Promise<Turno> {
     const documento = await this.documentos.obtenerConTexto(userId, conversacion.documentId);
     const preferencias = await this.usuarios.obtenerPreferencias(userId);
@@ -298,6 +301,7 @@ export class ChatService {
       preferencias,
       diagrama: diagrama ?? undefined,
       idioma,
+      modo,
     });
 
     const historial = await this.historialReciente(conversacion.id);
