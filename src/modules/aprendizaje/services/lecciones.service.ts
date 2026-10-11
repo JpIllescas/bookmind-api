@@ -117,6 +117,14 @@ export class LeccionesService {
 
     if (ejercicios.length < MINIMO_EJERCICIOS) {
       this.logger.warn(`Unidad "${unidad.titulo}" de ${documentId}: solo ${ejercicios.length} ejercicios.`);
+
+      if ((quiz?.paginasExcluidas ?? 0) > 0) {
+        throw new BadRequestException(
+          'Varias páginas de esta unidad se digitalizaron con poca calidad y no alcanzan para una lección. ' +
+            'Prueba con la siguiente unidad o sube un escaneo más nítido.',
+        );
+      }
+
       throw new BadRequestException(
         'Esta unidad es muy corta para armar una lección completa. Prueba con la siguiente.',
       );

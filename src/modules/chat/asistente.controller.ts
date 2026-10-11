@@ -42,7 +42,8 @@ export class AsistenteController {
       10,
     );
 
-    const utiles = pasajes.filter((p) => p.score >= MINIMO_PARECIDO);
+    // Una coincidencia literal (un nombre, una fecha) vale aunque el coseno sea bajo.
+    const utiles = pasajes.filter((p) => p.lexico || p.score >= MINIMO_PARECIDO);
 
     if (utiles.length === 0) {
       return {

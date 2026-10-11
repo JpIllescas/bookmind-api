@@ -6,8 +6,10 @@ import { CONSTANTS } from '../../common/configuration/constants';
 import { Cita } from '../chat/entities/chat-message.entity';
 import { DocumentChunk } from '../documents/entities/document-chunk.entity';
 import { PaginaExtraida } from '../documents/services/extraccion.service';
+import { BusquedaLexicaService } from './services/busqueda-lexica.service';
 import { EmbeddingsService } from './services/embeddings.service';
 import { FragmentacionService } from './services/fragmentacion.service';
+import { fusionarRangos } from './services/fusion-rrf';
 import { MuestreoService } from './services/muestreo.service';
 
 export interface ResultadoAnclaje {
@@ -21,6 +23,19 @@ export interface Pasaje {
   pagina: number;
   texto: string;
 }
+
+export interface PasajeRecuperado extends Pasaje {
+  /** Coseno con la pregunta: sirve de umbral de "hay algo que responder". */
+  score: number;
+  /** True si además contiene las palabras de la pregunta (búsqueda léxica). */
+  lexico: boolean;
+}
+
+/** Lo que necesita la fusión de un fragmento candidato. */
+type Candidato = Pick<DocumentChunk, 'id' | 'pagina' | 'texto' | 'embedding'>;
+
+/** Cuántos candidatos aporta cada lado (denso y léxico) antes de fusionar. */
+const CANDIDATOS_POR_LADO = 24;
 
 /** Lo mínimo del índice para comparar: el texto no hace falta y pesa. */
 type FragmentoIndexado = Pick<DocumentChunk, 'pagina' | 'embedding'>;
@@ -47,6 +62,7 @@ export class AnclajeService {
     private readonly embeddings: EmbeddingsService,
     private readonly fragmentacion: FragmentacionService,
     private readonly muestreo: MuestreoService,
+    private readonly lexica: BusquedaLexicaService,
   ) {}
 
   /** Parte el libro en fragmentos, los embebe y devuelve su huella semántica. */
@@ -65,6 +81,7 @@ export class AnclajeService {
           pagina: trozo.pagina,
           texto: trozo.texto,
           embedding: vectores[i],
+          confianzaOcr: trozo.confianza,
         }),
       ),
       // Sin trocear, un libro grande arma un INSERT con miles de parámetros.
@@ -147,60 +164,101 @@ export class AnclajeService {
   }
 
   /** Recupera los pasajes más relevantes cuando el libro no cabe en contexto. */
-  async recuperar(documentId: string, pregunta: string, cuantos = 8) {
-    const [vector] = await this.embeddings.embeberConsultas([pregunta]);
+  async recuperar(
+    documentId: string,
+    pregunta: string,
+    cuantos = 8,
+  ): Promise<PasajeRecuperado[]> {
+    const [[vector], fragmentos, lexicos] = await Promise.all([
+      this.embeddings.embeberConsultas([pregunta]),
+      this.fragmentos.find({
+        where: { documentId },
+        select: { id: true, pagina: true, texto: true, embedding: true },
+      }),
+      this.lexica.enDocumento(documentId, pregunta, CANDIDATOS_POR_LADO),
+    ]);
 
-    const fragmentos = await this.fragmentos.find({
-      where: { documentId },
-      select: { pagina: true, texto: true, embedding: true },
-    });
-
-    return fragmentos
-      .map((fragmento) => ({
-        pagina: fragmento.pagina,
-        texto: fragmento.texto,
-        score: EmbeddingsService.coseno(vector, fragmento.embedding),
-      }))
-      .sort((a, b) => b.score - a.score)
-      .slice(0, cuantos);
+    return this.fusionar(fragmentos, vector, lexicos, cuantos).map(
+      ({ candidato, score, lexico }) => ({
+        pagina: candidato.pagina,
+        texto: candidato.texto,
+        score,
+        lexico,
+      }),
+    );
   }
 
   /** Busca en todos los libros del estudiante, no solo en el que tiene abierto. */
   async recuperarEnBiblioteca(userId: string, pregunta: string, cuantos = 10) {
-    const [vector] = await this.embeddings.embeberConsultas([pregunta]);
+    const [[vector], fragmentos, lexicos] = await Promise.all([
+      this.embeddings.embeberConsultas([pregunta]),
+      this.fragmentos
+        .createQueryBuilder('fragmento')
+        .innerJoin('fragmento.document', 'documento')
+        .select([
+          'fragmento.id AS "id"',
+          'fragmento.documentId AS "documentId"',
+          'fragmento.pagina AS "pagina"',
+          'fragmento.texto AS "texto"',
+          'fragmento.embedding AS "embedding"',
+          'documento.title AS "titulo"',
+          'documento.tintColor AS "tinte"',
+        ])
+        .where('documento.user_id = :userId', { userId })
+        .getRawMany<Candidato & { documentId: string; titulo: string; tinte: string }>(),
+      this.lexica.enBiblioteca(userId, pregunta, CANDIDATOS_POR_LADO),
+    ]);
 
-    const fragmentos = await this.fragmentos
-      .createQueryBuilder('fragmento')
-      .innerJoin('fragmento.document', 'documento')
-      .select([
-        'fragmento.documentId AS "documentId"',
-        'fragmento.pagina AS "pagina"',
-        'fragmento.texto AS "texto"',
-        'fragmento.embedding AS "embedding"',
-        'documento.title AS "titulo"',
-        'documento.tintColor AS "tinte"',
-      ])
-      .where('documento.user_id = :userId', { userId })
-      .getRawMany<{
-        documentId: string;
-        pagina: number;
-        texto: string;
-        embedding: number[];
-        titulo: string;
-        tinte: string;
-      }>();
+    return this.fusionar(fragmentos, vector, lexicos, cuantos).map(
+      ({ candidato, score, lexico }) => ({
+        documentId: candidato.documentId,
+        titulo: candidato.titulo,
+        tinte: candidato.tinte,
+        pagina: candidato.pagina,
+        texto: candidato.texto,
+        score,
+        lexico,
+      }),
+    );
+  }
 
-    return fragmentos
-      .map((fragmento) => ({
-        documentId: fragmento.documentId,
-        titulo: fragmento.titulo,
-        tinte: fragmento.tinte,
-        pagina: fragmento.pagina,
-        texto: fragmento.texto,
-        score: EmbeddingsService.coseno(vector, fragmento.embedding),
-      }))
+  /**
+   * Búsqueda híbrida: el ranking por coseno y el léxico se combinan con RRF.
+   * El coseno se conserva como `score`; la posición fusionada solo ordena.
+   */
+  private fusionar<T extends Candidato>(
+    candidatos: T[],
+    vector: number[],
+    lexicos: string[],
+    cuantos: number,
+  ): { candidato: T; score: number; lexico: boolean }[] {
+    const conCoseno = candidatos.map((candidato) => ({
+      candidato,
+      score: EmbeddingsService.coseno(vector, candidato.embedding),
+    }));
+
+    const densos = [...conCoseno]
       .sort((a, b) => b.score - a.score)
-      .slice(0, cuantos);
+      .slice(0, CANDIDATOS_POR_LADO)
+      .map(({ candidato }) => candidato.id);
+
+    const fusionados = fusionarRangos([densos, lexicos]);
+    const enLexico = new Set(lexicos);
+
+    return conCoseno
+      .filter(({ candidato }) => fusionados.has(candidato.id))
+      // A igual posición fusionada decide el coseno.
+      .sort(
+        (a, b) =>
+          fusionados.get(b.candidato.id)! - fusionados.get(a.candidato.id)! ||
+          b.score - a.score,
+      )
+      .slice(0, cuantos)
+      .map(({ candidato, score }) => ({
+        candidato,
+        score,
+        lexico: enLexico.has(candidato.id),
+      }));
   }
 
   private async cargarIndice(documentId: string): Promise<FragmentoIndexado[]> {

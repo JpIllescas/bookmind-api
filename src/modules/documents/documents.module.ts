@@ -14,6 +14,7 @@ import { DocumentsService } from './documents.service';
 import { AlmacenamientoService } from './services/almacenamiento.service';
 import { CapitulosService } from './services/capitulos.service';
 import { ExtraccionService } from './services/extraccion.service';
+import { OcrService } from './services/ocr.service';
 
 @Module({
   imports: [
@@ -32,7 +33,7 @@ import { ExtraccionService } from './services/extraccion.service';
     }),
   ],
   controllers: [DocumentsController],
-  providers: [DocumentsService, ExtraccionService, AlmacenamientoService, CapitulosService],
+  providers: [DocumentsService, ExtraccionService, AlmacenamientoService, CapitulosService, OcrService],
   exports: [DocumentsService, ExtraccionService, AlmacenamientoService, CapitulosService],
 })
 export class DocumentsModule {}

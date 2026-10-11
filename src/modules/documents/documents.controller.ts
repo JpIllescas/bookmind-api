@@ -116,6 +116,13 @@ export class DocumentsController {
         ? await this.documentos.textoParaLectura(usuario.id, id)
         : null;
 
-    return { ...this.documentos.comoResumen(documento), extractedText };
+    const origenPaginas = await this.documentos.origenPaginasDe(documento);
+
+    return {
+      ...this.documentos.comoResumen(documento),
+      extractedText,
+      origenPaginas,
+      confianzaOcrMinima: CONSTANTS.OCR_CONFIANZA_MINIMA,
+    };
   }
 }

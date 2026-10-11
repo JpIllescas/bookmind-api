@@ -46,4 +46,21 @@ export class DocumentChunk {
   /** Capítulo al que pertenece la página; null en libros sin estructura detectable. */
   @Column({ name: 'chapter_id', type: 'uuid', nullable: true })
   chapterId: string | null;
+
+  /** Confianza del OCR de su página; null si el texto es nativo. */
+  @Column({ name: 'confianza_ocr', type: 'double precision', nullable: true })
+  confianzaOcr: number | null;
+
+  /** Texto completo en español; lo mantiene Postgres y solo lo lee la búsqueda léxica. */
+  @Index('IDX_document_chunks_tsv', { synchronize: false })
+  @Column({
+    type: 'tsvector',
+    nullable: true,
+    select: false,
+    insert: false,
+    update: false,
+    generatedType: 'STORED',
+    asExpression: `to_tsvector('spanish', "texto")`,
+  })
+  tsv?: string;
 }

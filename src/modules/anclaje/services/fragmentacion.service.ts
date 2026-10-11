@@ -6,6 +6,8 @@ export interface Fragmento {
   indice: number;
   pagina: number;
   texto: string;
+  /** La de su página si salió del OCR; null si es texto nativo. */
+  confianza: number | null;
 }
 
 /** Palabras por fragmento: con contexto propio, pero sin abarcar media página. */
@@ -40,6 +42,7 @@ export class FragmentacionService {
           indice: indice++,
           pagina: pagina.pagina,
           texto: trozo.join(' '),
+          confianza: pagina.confianza ?? null,
         });
 
         if (i + PALABRAS_POR_FRAGMENTO >= palabras.length) break;

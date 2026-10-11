@@ -110,24 +110,29 @@ export class CapitulosService {
   async paginasDe(documentId: string): Promise<PaginaExtraida[]> {
     const fragmentos = await this.fragmentos.find({
       where: { documentId },
-      select: { pagina: true, texto: true, indice: true },
+      select: { pagina: true, texto: true, indice: true, confianzaOcr: true },
       order: { indice: 'ASC' },
     });
 
-    const porPagina = new Map<number, string[]>();
+    const porPagina = new Map<number, { textos: string[]; confianza: number | null }>();
     for (const fragmento of fragmentos) {
-      const previos = porPagina.get(fragmento.pagina) ?? [];
+      const previa = porPagina.get(fragmento.pagina);
       const palabras = fragmento.texto.split(' ');
 
-      porPagina.set(fragmento.pagina, [
-        ...previos,
-        (previos.length > 0 ? palabras.slice(SOLAPE) : palabras).join(' '),
-      ]);
+      porPagina.set(fragmento.pagina, {
+        textos: [
+          ...(previa?.textos ?? []),
+          (previa ? palabras.slice(SOLAPE) : palabras).join(' '),
+        ],
+        // Todos los fragmentos de una página comparten la confianza de esa página.
+        confianza: fragmento.confianzaOcr ?? null,
+      });
     }
 
-    return [...porPagina.entries()].map(([pagina, textos]) => ({
+    return [...porPagina.entries()].map(([pagina, { textos, confianza }]) => ({
       pagina,
       texto: textos.join(' '),
+      confianza,
     }));
   }
 }

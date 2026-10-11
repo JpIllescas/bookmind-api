@@ -34,6 +34,19 @@ function validarProveedorLlm(valor: string | undefined): ProveedorLlm {
   return proveedor;
 }
 
+/** Número opcional con rango: un valor mal escrito tumba el arranque, no el primer libro. */
+function numeroEnRango(nombre: string, porDefecto: number, minimo: number, maximo: number): number {
+  const crudo = configService.get<string>(nombre)?.trim();
+  if (!crudo) return porDefecto;
+
+  const valor = Number(crudo);
+  if (!Number.isFinite(valor) || valor < minimo || valor > maximo) {
+    throw new Error(`${nombre}="${crudo}" no es válido: debe ser un número entre ${minimo} y ${maximo}.`);
+  }
+
+  return valor;
+}
+
 export const CONSTANTS = {
   // Entorno
   ENV: configService.getOrThrow<string>('ENV'),
@@ -92,10 +105,12 @@ export const CONSTANTS = {
   // Clasificador (pieza 3)
   ML_SERVICE_URL:
     configService.get<string>('ML_SERVICE_URL') ?? 'http://localhost:8000',
+  // OCR (lo ejecuta el ml-service; OCR_DPI y OCR_WORKERS se configuran allá)
   OCR_ENABLED:
     (configService.get<string>('OCR_ENABLED') ?? 'true') === 'true',
-  OCR_LANGUAGE:
-    configService.get<string>('OCR_LANGUAGE') ?? 'spa+eng',
+  OCR_MIN_CARACTERES: numeroEnRango('OCR_MIN_CARACTERES', 50, 0, 5_000),
+  OCR_CONFIANZA_MINIMA: numeroEnRango('OCR_CONFIANZA_MINIMA', 0.7, 0, 1),
+  OCR_MAX_PAGINAS: numeroEnRango('OCR_MAX_PAGINAS', 600, 1, 5_000),
 
   // Neon Object Storage (S3-compatible)
   AWS_ENDPOINT_URL_S3: configService.get<string>('AWS_ENDPOINT_URL_S3') ?? '',

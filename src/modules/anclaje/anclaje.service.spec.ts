@@ -3,6 +3,7 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 
 import { DocumentChunk } from '../documents/entities/document-chunk.entity';
 import { AnclajeService } from './anclaje.service';
+import { BusquedaLexicaService } from './services/busqueda-lexica.service';
 import { EmbeddingsService } from './services/embeddings.service';
 import { FragmentacionService } from './services/fragmentacion.service';
 import { MuestreoService } from './services/muestreo.service';
@@ -23,16 +24,22 @@ describe('AnclajeService', () => {
   let servicio: AnclajeService;
   let fragmentos: ReturnType<typeof crearRepositorioFalso>;
   let embeddings: { embeberPasajes: jest.Mock; embeberConsultas: jest.Mock };
+  let lexica: { enDocumento: jest.Mock; enBiblioteca: jest.Mock };
 
   beforeEach(async () => {
     fragmentos = crearRepositorioFalso();
     embeddings = { embeberPasajes: jest.fn(), embeberConsultas: jest.fn() };
+    lexica = {
+      enDocumento: jest.fn().mockResolvedValue([]),
+      enBiblioteca: jest.fn().mockResolvedValue([]),
+    };
 
     const modulo = await Test.createTestingModule({
       providers: [
         AnclajeService,
         { provide: getRepositoryToken(DocumentChunk), useValue: fragmentos },
         { provide: EmbeddingsService, useValue: embeddings },
+        { provide: BusquedaLexicaService, useValue: lexica },
         FragmentacionService,
         MuestreoService,
       ],
@@ -279,6 +286,30 @@ describe('AnclajeService', () => {
       expect(pasajes).toHaveLength(2);
       expect(pasajes[0].score).toBeGreaterThanOrEqual(pasajes[1].score);
       expect(pasajes[0].pagina).toBe(2);
+      expect(pasajes.every((p) => !p.lexico)).toBe(true);
+    });
+
+    it('sube un pasaje poco parecido si contiene las palabras de la pregunta', async () => {
+      // c0 es ortogonal a la pregunta, pero la búsqueda léxica lo encuentra.
+      indexado([EJE_Y, EJE_X, CASI_X]);
+      embeddings.embeberConsultas.mockResolvedValue([EJE_X]);
+      lexica.enDocumento.mockResolvedValue(['c0']);
+
+      const pasajes = await servicio.recuperar('doc-1', 'Walther Flemming', 2);
+
+      expect(pasajes.map((p) => p.pagina)).toEqual([1, 2]);
+      expect(pasajes[0].lexico).toBe(true);
+      // El score sigue siendo el coseno, no el puntaje fusionado.
+      expect(pasajes[0].score).toBeCloseTo(0, 3);
+    });
+
+    it('no devuelve el embedding ni el id al que llama', async () => {
+      indexado([EJE_X]);
+      embeddings.embeberConsultas.mockResolvedValue([EJE_X]);
+
+      const [pasaje] = await servicio.recuperar('doc-1', 'pregunta', 1);
+
+      expect(pasaje).toEqual({ pagina: 1, texto: 'fragmento 0', score: 1, lexico: false });
     });
   });
 });

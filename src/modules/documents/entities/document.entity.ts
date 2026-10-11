@@ -17,6 +17,20 @@ import { TipoDocumento } from '../../../common/enums/tipo-documento.enum';
 import { User } from '../../users/entities/user.entity';
 import { DocumentChunk } from './document-chunk.entity';
 
+export type OrigenTexto = 'nativo' | 'ocr';
+
+export interface OrigenPagina {
+  pagina: number;
+  origen: OrigenTexto;
+  /** Null si el texto es nativo. */
+  confianza: number | null;
+}
+
+export interface ProgresoOcr {
+  procesadas: number;
+  total: number;
+}
+
 /** Un libro escolar subido por un estudiante. */
 @Entity('documents')
 @Index(['userId', 'createdAt'])
@@ -91,11 +105,29 @@ export class Document {
   @Column({ default: 0 })
   progress: number;
 
+  /** `ocr` va entre la extracción y la indexación: digitaliza las páginas que son imagen. */
   @Column({ name: 'processing_status', default: 'pending' })
-  processingStatus: 'pending' | 'processing' | 'ready' | 'failed';
+  processingStatus: 'pending' | 'processing' | 'ocr' | 'ready' | 'failed';
 
   @Column({ name: 'processing_error', type: 'text', nullable: true })
   processingError: string | null;
+
+  // --- OCR ---
+
+  /** Cuántas páginas se leyeron con OCR; 0 en un PDF con texto nativo. */
+  @Column({ name: 'paginas_ocr', type: 'int', default: 0 })
+  paginasOcr: number;
+
+  @Column({ name: 'confianza_ocr_media', type: 'double precision', nullable: true })
+  confianzaOcrMedia: number | null;
+
+  /** Avance mientras `processingStatus` es `ocr`; null fuera de esa etapa. */
+  @Column({ name: 'progreso_ocr', type: 'jsonb', nullable: true })
+  progresoOcr: ProgresoOcr | null;
+
+  /** Origen y confianza de cada página; solo en libros que usaron OCR. */
+  @Column({ name: 'origen_paginas', type: 'jsonb', nullable: true, select: false })
+  origenPaginas: OrigenPagina[] | null;
 
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;

@@ -8,6 +8,7 @@ import {
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { CONSTANTS } from '../../common/configuration/constants';
 import { Materia } from '../../common/enums/materia.enum';
 import { TipoDocumento } from '../../common/enums/tipo-documento.enum';
 import {
@@ -17,7 +18,7 @@ import {
 } from '../../common/utils/taxonomia.util';
 import { AnclajeService } from '../anclaje/anclaje.service';
 import { MlService } from '../ml/ml.service';
-import { Document } from './entities/document.entity';
+import { Document, type OrigenPagina } from './entities/document.entity';
 import {
   AlmacenamientoService,
   MIME_POR_TIPO,
@@ -25,7 +26,13 @@ import {
 } from './services/almacenamiento.service';
 import { CapitulosService } from './services/capitulos.service';
 import { detectarCapitulos } from './services/deteccion-capitulos';
-import { ExtraccionService } from './services/extraccion.service';
+import { fusionarConOcr, paginasParaOcr, type ResultadoFusion } from './services/deteccion-ocr';
+import {
+  ExtraccionService,
+  type CapaTexto,
+  type PaginaExtraida,
+} from './services/extraccion.service';
+import { MENSAJES_OCR, OcrFallidoError, OcrService } from './services/ocr.service';
 
 const CARACTERES_PARA_CLASIFICAR = 200_000;
 
@@ -41,6 +48,7 @@ export class DocumentsService implements OnApplicationBootstrap {
     private readonly anclaje: AnclajeService,
     private readonly almacenamiento: AlmacenamientoService,
     private readonly capitulos: CapitulosService,
+    private readonly ocr: OcrService,
   ) {}
 
   /** Guarda el archivo y deja el trabajo pesado fuera del request. */
@@ -128,30 +136,20 @@ export class DocumentsService implements OnApplicationBootstrap {
     try {
       const buffer = await this.almacenamiento.leer(documento.storagePath!);
 
-      let { paginas, textoCompleto, totalPaginas, capaTexto, capitulos } =
-        await this.extraccion.extraer(buffer, documento.type);
+      const extraido = await this.extraccion.extraer(buffer, documento.type);
+      const { totalPaginas, capitulos } = extraido;
+      let { paginas, textoCompleto, capaTexto } = extraido;
 
-      // Convierte una sola vez el escaneo a texto; el chat nunca necesita reenviar imágenes.
-      if (capaTexto === 'sin_texto') {
-        const ocr =
-          documento.type === TipoDocumento.PDF &&
-          typeof this.ml.ocrPdf === 'function'
-            ? await this.ml.ocrPdf(buffer)
-            : null;
+      const ocr = await this.digitalizarPaginasImagen(documento, buffer, paginas, capaTexto);
+      if (ocr) {
+        paginas = ocr.paginas;
+        ({ textoCompleto, capaTexto } = this.extraccion.consolidar(paginas));
 
-        if (ocr && ocr.caracteres >= 200) {
-          paginas = ocr.paginas;
-          totalPaginas = ocr.totalPaginas;
-          textoCompleto = paginas
-            .map((pagina) => pagina.texto.trim())
-            .filter(Boolean)
-            .join('\n\n');
-          capaTexto = 'ok';
-          this.logger.log(`OCR completado para "${documento.title}": ${ocr.caracteres} caracteres.`);
-        }
+        // Pasó por el OCR y sigue sin texto: marcarlo listo dejaría al estudiante con un libro mudo.
+        if (capaTexto === 'sin_texto') throw new OcrFallidoError(MENSAJES_OCR.sinTextoLegible);
       }
 
-      // Si el OCR no está disponible, se puede leer en el visor, pero no se clasifica ni indexa.
+      // Sin OCR (desactivado o EPUB), un escaneo se puede leer en el visor, pero no se clasifica ni indexa.
       if (capaTexto === 'sin_texto') {
         await this.documentos.update(documento.id, {
           pages: totalPaginas,
@@ -182,6 +180,9 @@ export class DocumentsService implements OnApplicationBootstrap {
         classifierConfidence: clasificacion?.confidence ?? null,
         classifierFeatures: clasificacion?.featureImportance ?? undefined,
         tintColor: this.elegirTinte(clasificacion?.materia ?? null),
+        paginasOcr: ocr?.paginasOcr ?? 0,
+        confianzaOcrMedia: ocr?.confianzaMedia ?? null,
+        origenPaginas: ocr && ocr.paginasOcr > 0 ? ocr.origen : null,
       });
 
       const huella = await this.anclaje.indexar(documento.id, paginas);
@@ -206,7 +207,51 @@ export class DocumentsService implements OnApplicationBootstrap {
         processingStatus: 'failed',
         processingError:
           error instanceof Error ? error.message : String(error),
+        progresoOcr: null,
       });
+    }
+  }
+
+  /**
+   * OCR de las páginas que son imagen, también en PDF mixtos. Null si no hizo falta o no
+   * se pudo y el libro se estudia igual con su texto nativo; lanza si sin OCR no hay libro.
+   */
+  private async digitalizarPaginasImagen(
+    documento: Document,
+    buffer: Buffer,
+    paginas: PaginaExtraida[],
+    capaTexto: CapaTexto,
+  ): Promise<ResultadoFusion | null> {
+    if (documento.type !== TipoDocumento.PDF || !CONSTANTS.OCR_ENABLED) return null;
+
+    const candidatas = paginasParaOcr(paginas, CONSTANTS.OCR_MIN_CARACTERES);
+    if (candidatas.length === 0) return null;
+
+    await this.documentos.update(documento.id, {
+      processingStatus: 'ocr',
+      progresoOcr: { procesadas: 0, total: candidatas.length },
+    });
+
+    try {
+      const leidas = await this.ocr.digitalizar(documento.id, buffer, candidatas);
+      const fusion = fusionarConOcr(paginas, leidas);
+
+      this.logger.log(
+        `OCR de "${documento.title}": ${fusion.paginasOcr} de ${candidatas.length} páginas candidatas, ` +
+          `confianza media ${fusion.confianzaMedia ?? '-'}.`,
+      );
+      return fusion;
+    } catch (error) {
+      // Un libro con texto que solo trae portadas o láminas sin texto se estudia igual.
+      if (capaTexto === 'sin_texto') throw error;
+
+      this.logger.warn(
+        `Documento ${documento.id}: sin OCR para ${candidatas.length} páginas cortas; ` +
+          `se sigue con el texto nativo. ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return null;
+    } finally {
+      await this.documentos.update(documento.id, { processingStatus: 'processing', progresoOcr: null });
     }
   }
 
@@ -214,8 +259,13 @@ export class DocumentsService implements OnApplicationBootstrap {
   async onApplicationBootstrap(): Promise<void> {
     await this.almacenamiento.prepararCarpetas();
 
+    // Un OCR a medias se relanza entero: el ml-service no conserva trabajos entre reinicios.
     const pendientes = await this.documentos.find({
-      where: [{ processingStatus: 'pending' }, { processingStatus: 'processing' }],
+      where: [
+        { processingStatus: 'pending' },
+        { processingStatus: 'processing' },
+        { processingStatus: 'ocr' },
+      ],
     });
 
     for (const documento of pendientes) {
@@ -316,6 +366,20 @@ export class DocumentsService implements OnApplicationBootstrap {
     this.logger.log(`Documento "${documento.title}" eliminado por su dueño.`);
   }
 
+  /** Origen y confianza por página para el lector; pesa, así que no viaja en el listado. */
+  async origenPaginasDe(documento: Document): Promise<OrigenPagina[] | null> {
+    if (documento.paginasOcr === 0) return null;
+
+    const conOrigen = await this.documentos
+      .createQueryBuilder('documento')
+      .select('documento.id')
+      .addSelect('documento.origenPaginas')
+      .where('documento.id = :id', { id: documento.id })
+      .getOne();
+
+    return conOrigen?.origenPaginas ?? null;
+  }
+
   /** Texto para mostrar en pantalla; a diferencia del chat, un escaneo no es un error. */
   async textoParaLectura(userId: string, id: string): Promise<string> {
     const documento = await this.documentos
@@ -353,6 +417,9 @@ export class DocumentsService implements OnApplicationBootstrap {
       processingStatus: documento.processingStatus,
       processingError: documento.processingError,
       textLayer: documento.textLayer,
+      paginasOcr: documento.paginasOcr,
+      confianzaOcrMedia: documento.confianzaOcrMedia,
+      progresoOcr: documento.progresoOcr,
       // Sin archivo original el visor no tiene qué abrir.
       tieneArchivo: documento.storagePath !== null,
       fileSize: documento.fileSize,

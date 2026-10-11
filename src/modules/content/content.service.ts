@@ -76,7 +76,7 @@ export type Material =
 /** Quién produjo lo que se muestra: el motor propio o Gemini a partir de él. */
 export type Origen = 'motor' | 'gemini';
 
-export type Contenido = Material & { origen: Origen };
+export type Contenido = Material & { origen: Origen; paginasExcluidas?: number };
 
 /** Ítems que pasaron el verificador y cuántos se quitaron por no apoyarse en el libro. */
 interface Anclados<T> {
@@ -130,10 +130,14 @@ export class ContentService {
     }
 
     const paginas = await this.capitulos.paginasDe(documentId);
-    const motor =
-      type === 'summary'
-        ? await this.resumen.generar(documentId, paginas)
-        : await this.desdeMotor(type, paginas);
+    let paginasExcluidas = 0;
+    let motor: Material | null;
+
+    if (type === 'summary') {
+      motor = await this.resumen.generar(documentId, paginas);
+    } else {
+      ({ material: motor, paginasExcluidas } = await this.desdeMotor(type, paginas));
+    }
 
     let content: Contenido;
 
@@ -152,6 +156,9 @@ export class ContentService {
       const generado = this.normalizar(type, await this.pedirAGemini(type, document, preferencias));
       content = { ...(await this.anclar(documentId, generado)), origen: 'gemini' };
     }
+
+    // El Studio avisa de que el material no cubre las páginas con OCR poco fiable.
+    if (paginasExcluidas > 0) content = { ...content, paginasExcluidas };
 
     return this.contents.save(
       this.contents.create({ documentId, userId, type, content }),
@@ -214,19 +221,35 @@ export class ContentService {
 
   // --- Motor propio ---
 
-  /** Null si el motor no responde o no encontró nada con lo que Gemini sí podría. */
+  /** Material null si el motor no responde o no encontró nada con lo que Gemini sí podría. */
   private async desdeMotor(
     type: GeneratedContentType,
     paginas: PaginaEstudio[],
-  ): Promise<Material | null> {
-    if (paginas.length === 0) return null;
+  ): Promise<{ material: Material | null; paginasExcluidas: number }> {
+    if (paginas.length === 0) return { material: null, paginasExcluidas: 0 };
 
     const resultado = await this.ml.estudio<any>(GENERADOR_POR_TIPO[type]!, paginas);
-    if (!resultado) return null;
+    if (!resultado) return { material: null, paginasExcluidas: 0 };
 
     const items = resultado.items ?? [];
-    if (items.length === 0 && CON_RESPALDO_GEMINI.includes(type)) return null;
+    const paginasExcluidas = resultado.paginasExcluidas ?? 0;
 
+    // Gemini leería el texto completo y se saltaría justo las páginas que el motor descartó por mal OCR.
+    if (items.length === 0 && paginasExcluidas > 0) {
+      throw new BadRequestException(
+        `${paginasExcluidas} páginas de este libro se digitalizaron con poca calidad y lo que queda ` +
+          'no alcanza para armar este material. Puedes usar el chat y el resumen, o subir un escaneo más nítido.',
+      );
+    }
+
+    if (items.length === 0 && CON_RESPALDO_GEMINI.includes(type)) {
+      return { material: null, paginasExcluidas };
+    }
+
+    return { material: this.comoMaterial(type, items), paginasExcluidas };
+  }
+
+  private comoMaterial(type: GeneratedContentType, items: any[]): Material | null {
     switch (type) {
       case 'summary':
         // El resumen tiene su propio servicio: va por capítulos y escala con el libro.

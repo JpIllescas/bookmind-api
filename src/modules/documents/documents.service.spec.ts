@@ -3,6 +3,7 @@ import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
 import { AnclajeService } from '../anclaje/anclaje.service';
+import { CONSTANTS } from '../../common/configuration/constants';
 import { Materia } from '../../common/enums/materia.enum';
 import { Nivel } from '../../common/enums/nivel.enum';
 import { TipoDocumento } from '../../common/enums/tipo-documento.enum';
@@ -11,7 +12,8 @@ import { Document } from './entities/document.entity';
 import { DocumentsService } from './documents.service';
 import { AlmacenamientoService } from './services/almacenamiento.service';
 import { CapitulosService } from './services/capitulos.service';
-import { ExtraccionService } from './services/extraccion.service';
+import { ExtraccionService, type PaginaExtraida } from './services/extraccion.service';
+import { MENSAJES_OCR, OcrFallidoError, OcrService } from './services/ocr.service';
 
 function crearRepositorioFalso() {
   return {
@@ -27,14 +29,19 @@ function crearRepositorioFalso() {
 
 /** El procesamiento arranca fuera del request; esto espera a que termine. */
 async function esperarProcesamiento(): Promise<void> {
-  await new Promise((listo) => setImmediate(listo));
-  await new Promise((listo) => setImmediate(listo));
+  // El OCR suma varios await al flujo: se dan vueltas de sobra al event loop.
+  for (let vuelta = 0; vuelta < 10; vuelta += 1) {
+    await new Promise((listo) => setImmediate(listo));
+  }
 }
+
+const TEXTO_NATIVO = 'La célula es la unidad básica de los seres vivos y realiza la nutrición. '.repeat(10).trim();
 
 describe('DocumentsService', () => {
   let servicio: DocumentsService;
   let documentos: ReturnType<typeof crearRepositorioFalso>;
-  let extraccion: { extraer: jest.Mock };
+  let extraccion: { extraer: jest.Mock; consolidar: jest.Mock };
+  let ocr: { digitalizar: jest.Mock };
   let ml: { clasificar: jest.Mock };
   let anclaje: { indexar: jest.Mock };
   let almacenamiento: {
@@ -52,15 +59,18 @@ describe('DocumentsService', () => {
 
   beforeEach(async () => {
     documentos = crearRepositorioFalso();
+    const extraccionReal = new ExtraccionService();
     extraccion = {
       extraer: jest.fn().mockResolvedValue({
-        paginas: [{ pagina: 1, texto: 'contenido' }],
-        textoCompleto: 'La célula es la unidad básica de los seres vivos.',
+        paginas: [{ pagina: 1, texto: TEXTO_NATIVO }],
+        textoCompleto: TEXTO_NATIVO,
         totalPaginas: 210,
         capaTexto: 'ok',
         capitulos: [],
       }),
+      consolidar: jest.fn((paginas: PaginaExtraida[]) => extraccionReal.consolidar(paginas)),
     };
+    ocr = { digitalizar: jest.fn().mockResolvedValue([]) };
     ml = { clasificar: jest.fn().mockResolvedValue(null) };
     anclaje = { indexar: jest.fn().mockResolvedValue([0.1, 0.2, 0.3]) };
     almacenamiento = {
@@ -78,6 +88,7 @@ describe('DocumentsService', () => {
         { provide: MlService, useValue: ml },
         { provide: AnclajeService, useValue: anclaje },
         { provide: AlmacenamientoService, useValue: almacenamiento },
+        { provide: OcrService, useValue: ocr },
         {
           provide: CapitulosService,
           useValue: { guardar: jest.fn().mockResolvedValue([]), listar: jest.fn() },
@@ -217,7 +228,8 @@ describe('DocumentsService', () => {
       );
     });
 
-    it('marca el escaneo como sin_texto en vez de rechazarlo', async () => {
+    it('con el OCR desactivado, marca el escaneo como sin_texto en vez de rechazarlo', async () => {
+      CONSTANTS.OCR_ENABLED = false;
       extraccion.extraer.mockResolvedValue({
         paginas: [{ pagina: 1, texto: '' }],
         textoCompleto: '',
@@ -226,8 +238,14 @@ describe('DocumentsService', () => {
         capitulos: [],
       });
 
-      await servicio.encolar('usuario-a', archivoFalso);
-      await esperarProcesamiento();
+      try {
+        await servicio.encolar('usuario-a', archivoFalso);
+        await esperarProcesamiento();
+      } finally {
+        CONSTANTS.OCR_ENABLED = true;
+      }
+
+      expect(ocr.digitalizar).not.toHaveBeenCalled();
 
       expect(documentos.update).toHaveBeenCalledWith(
         'doc-1',
@@ -306,6 +324,162 @@ describe('DocumentsService', () => {
           processingError: 'PDF corrupto',
         }),
       );
+    });
+  });
+
+  describe('OCR por página', () => {
+    const escaneo = (paginas: number) => ({
+      paginas: Array.from({ length: paginas }, (_, i) => ({ pagina: i + 1, texto: '' })),
+      textoCompleto: '',
+      totalPaginas: paginas,
+      capaTexto: 'sin_texto',
+      capitulos: [],
+    });
+
+    const leida = (numero: number, confianza = 0.9) => ({
+      numero,
+      texto: `Página ${numero}: la fotosíntesis convierte la luz en energía química para la planta. `.repeat(10),
+      confianza,
+    });
+
+    const cambios = () => documentos.update.mock.calls.map(([, c]) => c as Partial<Document>);
+
+    it('en un PDF mixto solo digitaliza las páginas sin texto y une ambos', async () => {
+      extraccion.extraer.mockResolvedValue({
+        paginas: [
+          { pagina: 1, texto: TEXTO_NATIVO },
+          { pagina: 2, texto: '' },
+          { pagina: 3, texto: TEXTO_NATIVO },
+        ],
+        textoCompleto: TEXTO_NATIVO,
+        totalPaginas: 3,
+        capaTexto: 'ok',
+        capitulos: [],
+      });
+      ocr.digitalizar.mockResolvedValue([leida(2, 0.82)]);
+
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
+
+      expect(ocr.digitalizar).toHaveBeenCalledWith('doc-1', expect.any(Buffer), [2]);
+      expect(cambios()).toContainEqual({ processingStatus: 'ocr', progresoOcr: { procesadas: 0, total: 1 } });
+
+      const indexadas = anclaje.indexar.mock.calls[0][1] as PaginaExtraida[];
+      expect(indexadas.map((p) => p.confianza)).toEqual([null, 0.82, null]);
+      expect(indexadas[1].texto).toContain('fotosíntesis');
+
+      expect(documentos.update).toHaveBeenCalledWith(
+        'doc-1',
+        expect.objectContaining({
+          paginasOcr: 1,
+          confianzaOcrMedia: 0.82,
+          origenPaginas: [
+            { pagina: 1, origen: 'nativo', confianza: null },
+            { pagina: 2, origen: 'ocr', confianza: 0.82 },
+            { pagina: 3, origen: 'nativo', confianza: null },
+          ],
+        }),
+      );
+      expect(documentos.update).toHaveBeenLastCalledWith('doc-1', expect.objectContaining({ processingStatus: 'ready' }));
+    });
+
+    it('un escaneo digitalizado se estudia como un PDF normal', async () => {
+      extraccion.extraer.mockResolvedValue(escaneo(3));
+      ocr.digitalizar.mockResolvedValue([leida(1), leida(2), leida(3)]);
+
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
+
+      expect(ocr.digitalizar).toHaveBeenCalledWith('doc-1', expect.any(Buffer), [1, 2, 3]);
+      expect(documentos.update).toHaveBeenCalledWith(
+        'doc-1',
+        expect.objectContaining({ textLayer: 'ok', paginasOcr: 3, confianzaOcrMedia: 0.9 }),
+      );
+      expect(anclaje.indexar).toHaveBeenCalled();
+      expect(documentos.update).toHaveBeenLastCalledWith('doc-1', expect.objectContaining({ processingStatus: 'ready' }));
+    });
+
+    it('si el OCR no está disponible, un escaneo falla con un mensaje para el estudiante', async () => {
+      extraccion.extraer.mockResolvedValue(escaneo(2));
+      ocr.digitalizar.mockRejectedValue(new OcrFallidoError(MENSAJES_OCR.noDisponible));
+
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
+
+      expect(cambios().some((c) => c.processingStatus === 'ready')).toBe(false);
+      expect(documentos.update).toHaveBeenLastCalledWith(
+        'doc-1',
+        expect.objectContaining({ processingStatus: 'failed', processingError: MENSAJES_OCR.noDisponible }),
+      );
+      expect(anclaje.indexar).not.toHaveBeenCalled();
+    });
+
+    it('si el OCR no lee nada, el escaneo falla en vez de quedar listo y vacío', async () => {
+      extraccion.extraer.mockResolvedValue(escaneo(2));
+      ocr.digitalizar.mockResolvedValue([
+        { numero: 1, texto: '', confianza: 0 },
+        { numero: 2, texto: '', confianza: 0 },
+      ]);
+
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
+
+      expect(cambios().some((c) => c.processingStatus === 'ready')).toBe(false);
+      expect(documentos.update).toHaveBeenLastCalledWith(
+        'doc-1',
+        expect.objectContaining({ processingStatus: 'failed', processingError: MENSAJES_OCR.sinTextoLegible }),
+      );
+    });
+
+    it('si el OCR falla en un libro con texto, sigue con el texto nativo', async () => {
+      extraccion.extraer.mockResolvedValue({
+        paginas: [{ pagina: 1, texto: TEXTO_NATIVO }, { pagina: 2, texto: 'Unidad 3' }],
+        textoCompleto: TEXTO_NATIVO,
+        totalPaginas: 2,
+        capaTexto: 'ok',
+        capitulos: [],
+      });
+      ocr.digitalizar.mockRejectedValue(new OcrFallidoError(MENSAJES_OCR.noDisponible));
+
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
+
+      const indexadas = anclaje.indexar.mock.calls[0][1] as PaginaExtraida[];
+      expect(indexadas[1].texto).toBe('Unidad 3');
+      expect(documentos.update).toHaveBeenCalledWith('doc-1', expect.objectContaining({ paginasOcr: 0 }));
+      expect(documentos.update).toHaveBeenLastCalledWith('doc-1', expect.objectContaining({ processingStatus: 'ready' }));
+    });
+
+    it('un EPUB nunca pasa por el OCR', async () => {
+      extraccion.extraer.mockResolvedValue({
+        paginas: [{ pagina: 1, texto: 'Portada' }, { pagina: 2, texto: TEXTO_NATIVO }],
+        textoCompleto: TEXTO_NATIVO,
+        totalPaginas: 2,
+        capaTexto: 'ok',
+        capitulos: [],
+      });
+
+      await servicio.encolar('usuario-a', { ...archivoFalso, originalname: 'libro.epub' } as Express.Multer.File);
+      await esperarProcesamiento();
+
+      expect(ocr.digitalizar).not.toHaveBeenCalled();
+    });
+
+    it('al reiniciar retoma también los documentos que estaban en OCR', async () => {
+      extraccion.extraer.mockResolvedValue(escaneo(1));
+      ocr.digitalizar.mockResolvedValue([leida(1)]);
+      documentos.find.mockResolvedValue([
+        { id: 'doc-ocr', storagePath: 'usuario-a/doc-ocr.pdf', type: TipoDocumento.PDF, title: 'Escaneo' } as Document,
+      ]);
+
+      await servicio.onApplicationBootstrap();
+      await esperarProcesamiento();
+
+      expect(documentos.find).toHaveBeenCalledWith({
+        where: expect.arrayContaining([{ processingStatus: 'ocr' }]),
+      });
+      expect(ocr.digitalizar).toHaveBeenCalledWith('doc-ocr', expect.any(Buffer), [1]);
+      expect(documentos.update).toHaveBeenLastCalledWith('doc-ocr', expect.objectContaining({ processingStatus: 'ready' }));
     });
   });
 

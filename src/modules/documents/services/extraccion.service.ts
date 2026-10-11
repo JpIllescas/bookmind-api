@@ -9,6 +9,8 @@ import { CapituloDetectado, capitulosDesdeMarcas } from './deteccion-capitulos';
 export interface PaginaExtraida {
   pagina: number;
   texto: string;
+  /** Solo en páginas leídas con OCR: confianza de 0 a 1. Ausente o null es texto nativo. */
+  confianza?: number | null;
 }
 
 /** `sin_texto` es un escaneo: se puede mostrar, pero no alimenta al chat ni al clasificador. */
@@ -62,18 +64,17 @@ export class ExtraccionService {
         ? await this.extraerDePdf(buffer)
         : await this.extraerDeEpub(buffer);
 
+    return { ...this.consolidar(paginas), paginas, totalPaginas: paginas.length, capitulos };
+  }
+
+  /** Texto completo y capa de texto de unas páginas; se recalcula tras sumarles el OCR. */
+  consolidar(paginas: PaginaExtraida[]): { textoCompleto: string; capaTexto: CapaTexto } {
     const conTexto = paginas.filter((p) => p.texto.trim().length > 0);
     const textoCompleto = this.normalizar(
       conTexto.map((p) => p.texto).join('\n\n'),
     );
 
-    return {
-      paginas,
-      textoCompleto,
-      totalPaginas: paginas.length,
-      capaTexto: this.evaluarCapaTexto(paginas, textoCompleto),
-      capitulos,
-    };
+    return { textoCompleto, capaTexto: this.evaluarCapaTexto(paginas, textoCompleto) };
   }
 
   /** Página por página, que es lo que permite citar dónde estaba cada cosa. */
