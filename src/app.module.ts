@@ -2,6 +2,8 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_GUARD } from '@nestjs/core';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+
+import { CONSTANTS } from './common/configuration/constants';
 import { TypeOrmModule } from '@nestjs/typeorm';
 
 import { dataSourceOptions } from './common/configuration/typeorm.config';
@@ -24,7 +26,7 @@ import { ContentModule } from './modules/content/content.module';
     TypeOrmModule.forRoot(dataSourceOptions),
 
     // Importa sobre todo en /auth/login: probar contraseñas sale gratis.
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 120 }]),
+    ThrottlerModule.forRoot([{ ttl: 60_000, limit: CONSTANTS.THROTTLE_LIMIT }]),
 
     UsersModule,
     AuthModule,

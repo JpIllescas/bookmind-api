@@ -30,8 +30,8 @@ describe('AnclajeService', () => {
     fragmentos = crearRepositorioFalso();
     embeddings = { embeberPasajes: jest.fn(), embeberConsultas: jest.fn() };
     lexica = {
-      enDocumento: jest.fn().mockResolvedValue([]),
-      enBiblioteca: jest.fn().mockResolvedValue([]),
+      enDocumento: jest.fn().mockResolvedValue({ ids: [], conTodas: true }),
+      enBiblioteca: jest.fn().mockResolvedValue({ ids: [], conTodas: true }),
     };
 
     const modulo = await Test.createTestingModule({
@@ -150,6 +150,36 @@ describe('AnclajeService', () => {
 
       expect(r.citations).toHaveLength(1);
       expect(r.citations[0].claim).toContain('célula');
+    });
+
+    it('el rechazo del chat sin Gemini no se ancla: no es una afirmación sobre el libro', async () => {
+      // Visto en la app: bajo "No encontré…" aparecía "Respaldado por el libro · 85%" con páginas ajenas.
+      indexado([EJE_X]);
+
+      const r = await servicio.verificar(
+        'doc-1',
+        'No encontré en este libro un pasaje que responda eso. Prueba con otras palabras, o con el nombre de un tema o capítulo.',
+      );
+
+      expect(r).toEqual({ groundingScore: null, citations: [], flaggedClaims: [] });
+      expect(embeddings.embeberConsultas).not.toHaveBeenCalled();
+    });
+
+    it('de una respuesta extractiva solo ancla las citas, no la introducción ni el pie', async () => {
+      indexado([EJE_X]);
+      embeddings.embeberConsultas.mockResolvedValue([CASI_X]);
+
+      const r = await servicio.verificar(
+        'doc-1',
+        [
+          'Esto es lo que dice el libro sobre tu pregunta:',
+          '- «El agua sirve para realizar funciones vitales y regular la temperatura.» (pág. 24)',
+          '_Respuesta armada con pasajes del libro por el motor propio, sin IA externa._',
+        ].join('\n\n'),
+      );
+
+      expect(r.citations).toHaveLength(1);
+      expect(r.citations[0].claim).toContain('funciones vitales');
     });
 
     it('limpia el Markdown antes de citar', async () => {
@@ -293,7 +323,7 @@ describe('AnclajeService', () => {
       // c0 es ortogonal a la pregunta, pero la búsqueda léxica lo encuentra.
       indexado([EJE_Y, EJE_X, CASI_X]);
       embeddings.embeberConsultas.mockResolvedValue([EJE_X]);
-      lexica.enDocumento.mockResolvedValue(['c0']);
+      lexica.enDocumento.mockResolvedValue({ ids: ['c0'], conTodas: true });
 
       const pasajes = await servicio.recuperar('doc-1', 'Walther Flemming', 2);
 
@@ -301,6 +331,18 @@ describe('AnclajeService', () => {
       expect(pasajes[0].lexico).toBe(true);
       // El score sigue siendo el coseno, no el puntaje fusionado.
       expect(pasajes[0].score).toBeCloseTo(0, 3);
+    });
+
+    it('lo que sale del reintento con cualquier palabra ordena, pero no cuenta como léxico', async () => {
+      // Medido con libros reales: con OR casi todo pasaje comparte una palabra y el chat nunca decía "no encontré".
+      indexado([EJE_Y, EJE_X, CASI_X]);
+      embeddings.embeberConsultas.mockResolvedValue([EJE_X]);
+      lexica.enDocumento.mockResolvedValue({ ids: ['c0'], conTodas: false });
+
+      const pasajes = await servicio.recuperar('doc-1', '¿Quién escribió Cien años de soledad?', 2);
+
+      expect(pasajes.map((p) => p.pagina)).toEqual([1, 2]);
+      expect(pasajes.every((p) => !p.lexico)).toBe(true);
     });
 
     it('no devuelve el embedding ni el id al que llama', async () => {

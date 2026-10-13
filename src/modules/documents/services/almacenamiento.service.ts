@@ -1,18 +1,24 @@
 import {
-  DeleteObjectCommand,
-  GetObjectCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
-import { createReadStream } from 'node:fs';
+  HttpException,
+  Injectable,
+  Logger,
+  NotFoundException,
+  ServiceUnavailableException,
+} from '@nestjs/common';
 import { rm } from 'node:fs/promises';
 import { isAbsolute } from 'node:path';
 import { Readable } from 'node:stream';
 
 import { CONSTANTS } from '../../../common/configuration/constants';
 import { TipoDocumento } from '../../../common/enums/tipo-documento.enum';
+import { AlmacenamientoLocal } from './almacenamiento/almacenamiento-local';
+import { AlmacenamientoS3, ConfigS3, variablesS3Faltantes } from './almacenamiento/almacenamiento-s3';
+import {
+  AlmacenamientoNoDisponibleError,
+  ArchivoNoEncontradoError,
+  DriverAlmacenamiento,
+  ProveedorAlmacenamiento,
+} from './almacenamiento/proveedor-almacenamiento';
 
 export interface RangoSolicitado {
   inicio: number;
@@ -37,14 +43,50 @@ export const MIME_POR_TIPO: Record<TipoDocumento, string> = {
   [TipoDocumento.EPUB]: 'application/epub+zip',
 };
 
-/** Neon Object Storage es S3-compatible; el bucket permanece privado. */
+const MENSAJE_NO_ENCONTRADO =
+  'No encontramos el archivo de este libro. Bórralo de tu biblioteca y vuelve a subirlo.';
+const MENSAJE_NO_DISPONIBLE =
+  'El almacenamiento de libros no está disponible en este momento. ' +
+  'Intenta de nuevo en unos minutos; si sigue pasando, avisa al administrador.';
+
+/** Elige el driver (STORAGE_DRIVER) y convierte sus errores en respuestas para el estudiante. */
 @Injectable()
 export class AlmacenamientoService {
   private readonly logger = new Logger(AlmacenamientoService.name);
-  private readonly cliente: S3Client | null = this.crearCliente();
+  private readonly local = new AlmacenamientoLocal(CONSTANTS.UPLOAD_PATH);
+  private readonly activo: ProveedorAlmacenamiento;
+  private readonly faltantesS3: string[];
+
+  constructor() {
+    const configS3 = this.configS3();
+    const driver = this.elegirDriver(configS3);
+    this.activo = driver === 's3' ? new AlmacenamientoS3(configS3) : this.local;
+
+    this.faltantesS3 = driver === 's3' ? variablesS3Faltantes(configS3) : [];
+    if (this.faltantesS3.length) {
+      this.logger.error(
+        `STORAGE_DRIVER=s3 pero faltan ${this.faltantesS3.join(', ')}: subir y abrir libros responderá 503.`,
+      );
+    } else {
+      this.logger.log(`Almacenamiento de libros: ${driver}.`);
+    }
+  }
+
+  get driver(): DriverAlmacenamiento {
+    return this.activo.nombre;
+  }
+
+  /** Para /api/health: qué driver está activo y si tiene lo que necesita. */
+  estado(): { driver: DriverAlmacenamiento; configurado: boolean; faltan: string[] } {
+    return { driver: this.activo.nombre, configurado: this.faltantesS3.length === 0, faltan: this.faltantesS3 };
+  }
 
   async prepararCarpetas(): Promise<void> {
-    // Se conserva el hook para no bloquear el arranque de documentos pendientes.
+    // Con s3 la carpeta solo sirve para los libros viejos; si no se puede crear, no se bloquea el arranque.
+    await this.local.prepararRaiz().catch((error) => {
+      if (this.activo === this.local) throw error;
+      this.logger.warn(`No se pudo preparar ${CONSTANTS.UPLOAD_PATH}: ${String(error)}`);
+    });
   }
 
   async guardarDefinitivo(
@@ -54,94 +96,37 @@ export class AlmacenamientoService {
     tipo: TipoDocumento,
   ): Promise<string> {
     const clave = `${userId}/${documentId}.${EXTENSION[tipo]}`;
-    const cuerpo = Buffer.isBuffer(origen) ? origen : createReadStream(origen);
-
     try {
-      await this.clienteRequerido().send(
-        new PutObjectCommand({
-          Bucket: CONSTANTS.S3_BUCKET,
-          Key: clave,
-          Body: cuerpo,
-          ContentType: MIME_POR_TIPO[tipo],
-        }),
-      );
+      await this.activo.guardar(clave, origen, MIME_POR_TIPO[tipo]);
+    } catch (error) {
+      throw this.respuestaPara(error, clave);
     } finally {
-      if (typeof origen === 'string') {
-        await rm(origen, { force: true });
-      }
+      if (typeof origen === 'string') await rm(origen, { force: true });
     }
-
     return clave;
   }
 
   async tamano(clave: string): Promise<number> {
-    try {
-      const respuesta = await this.clienteRequerido().send(
-        new HeadObjectCommand({ Bucket: CONSTANTS.S3_BUCKET, Key: clave }),
-      );
-      return Number(respuesta.ContentLength ?? 0);
-    } catch {
-      throw new NotFoundException('Error al obtener el libro, intenta subirlo');
-    }
+    return this.ejecutar(clave, (driver) => driver.tamano(clave));
   }
 
   async abrir(clave: string, rango?: RangoSolicitado): Promise<ArchivoAbierto> {
-    const tamano = await this.tamano(clave);
-    const inicio = rango ? Math.min(rango.inicio, tamano - 1) : 0;
-    const fin = rango ? Math.min(rango.fin, tamano - 1) : tamano - 1;
+    return this.ejecutar(clave, async (driver) => {
+      const tamano = await driver.tamano(clave);
+      const inicio = rango ? Math.min(rango.inicio, tamano - 1) : 0;
+      const fin = rango ? Math.min(rango.fin, tamano - 1) : tamano - 1;
+      const flujo = await driver.abrir(clave, rango ? { inicio, fin } : undefined);
+      return { flujo, tamano, inicio, fin, esParcial: rango !== undefined };
+    });
+  }
 
-    try {
-      const respuesta = await this.clienteRequerido().send(
-        new GetObjectCommand({
-          Bucket: CONSTANTS.S3_BUCKET,
-          Key: clave,
-          ...(rango ? { Range: `bytes=${inicio}-${fin}` } : {}),
-        }),
-      );
-
-      if (!respuesta.Body) throw new Error('Object Storage devolvió una respuesta vacía.');
-      return {
-        flujo: respuesta.Body as Readable,
-        tamano,
-        inicio,
-        fin,
-        esParcial: rango !== undefined,
-      };
-    } catch {
-      throw new NotFoundException('Error al obtener el libro, intenta subirlo');
-    }
+  async leer(clave: string): Promise<Buffer> {
+    return this.ejecutar(clave, (driver) => driver.leer(clave));
   }
 
   async eliminar(clave: string | null): Promise<void> {
     if (!clave) return;
-
-    // Durante la validación de extensión todavía puede llegar la ruta temporal de Multer.
-    if (isAbsolute(clave)) {
-      await rm(clave, { force: true });
-      return;
-    }
-
-    await this.clienteRequerido().send(
-      new DeleteObjectCommand({ Bucket: CONSTANTS.S3_BUCKET, Key: clave }),
-    );
-  }
-
-  async leer(clave: string): Promise<Buffer> {
-    try {
-      const respuesta = await this.clienteRequerido().send(
-        new GetObjectCommand({ Bucket: CONSTANTS.S3_BUCKET, Key: clave }),
-      );
-      if (!respuesta.Body) throw new Error('Object Storage devolvió una respuesta vacía.');
-
-      const partes: Buffer[] = [];
-      for await (const parte of respuesta.Body as AsyncIterable<Buffer | Uint8Array | string>) {
-        partes.push(Buffer.isBuffer(parte) ? parte : Buffer.from(parte));
-      }
-      return Buffer.concat(partes);
-    } catch (error) {
-      this.logger.warn(`No se pudo leer el objeto ${clave}: ${String(error)}`);
-      throw new NotFoundException('Error al obtener el libro, intenta subirlo');
-    }
+    await this.ejecutar(clave, (driver) => driver.eliminar(clave));
   }
 
   interpretarRango(cabecera: string | undefined, tamanoConocido: number): RangoSolicitado | undefined {
@@ -157,35 +142,45 @@ export class AlmacenamientoService {
     return { inicio: Number(desde), fin: hasta === '' ? tamanoConocido - 1 : Number(hasta) };
   }
 
-  private crearCliente(): S3Client | null {
-    if (
-      !CONSTANTS.AWS_ENDPOINT_URL_S3 ||
-      !CONSTANTS.AWS_REGION ||
-      !CONSTANTS.AWS_ACCESS_KEY_ID ||
-      !CONSTANTS.AWS_SECRET_ACCESS_KEY ||
-      !CONSTANTS.S3_BUCKET
-    ) {
-      return null;
+  private async ejecutar<T>(clave: string, operacion: (driver: ProveedorAlmacenamiento) => Promise<T>): Promise<T> {
+    try {
+      return await operacion(await this.driverPara(clave));
+    } catch (error) {
+      throw this.respuestaPara(error, clave);
     }
-
-    return new S3Client({
-      region: CONSTANTS.AWS_REGION,
-      endpoint: CONSTANTS.AWS_ENDPOINT_URL_S3,
-      credentials: {
-        accessKeyId: CONSTANTS.AWS_ACCESS_KEY_ID,
-        secretAccessKey: CONSTANTS.AWS_SECRET_ACCESS_KEY,
-      },
-      forcePathStyle: CONSTANTS.S3_FORCE_PATH_STYLE,
-      requestChecksumCalculation: 'WHEN_REQUIRED',
-    });
   }
 
-  private clienteRequerido(): S3Client {
-    if (!this.cliente) {
-      throw new Error(
-        'Neon Object Storage no está configurado. Define AWS_ENDPOINT_URL_S3, S3_BUCKET, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_REGION y S3_FORCE_PATH_STYLE.',
-      );
+  // Los libros subidos antes de Neon (y el temporal de Multer) siguen en disco aunque el driver sea s3.
+  private async driverPara(clave: string): Promise<ProveedorAlmacenamiento> {
+    if (this.activo === this.local) return this.local;
+    if (isAbsolute(clave) || clave.includes('\\') || (await this.local.existe(clave))) return this.local;
+    return this.activo;
+  }
+
+  private respuestaPara(error: unknown, clave: string): HttpException {
+    if (error instanceof HttpException) return error;
+    if (error instanceof ArchivoNoEncontradoError) {
+      this.logger.warn(`El archivo "${clave}" no existe en el almacenamiento.`);
+      return new NotFoundException(MENSAJE_NO_ENCONTRADO);
     }
-    return this.cliente;
+    const detalle = error instanceof AlmacenamientoNoDisponibleError ? error.message : String(error);
+    this.logger.error(`Almacenamiento no disponible con "${clave}": ${detalle}`);
+    return new ServiceUnavailableException(MENSAJE_NO_DISPONIBLE);
+  }
+
+  private elegirDriver(configS3: ConfigS3): DriverAlmacenamiento {
+    if (CONSTANTS.STORAGE_DRIVER) return CONSTANTS.STORAGE_DRIVER;
+    return variablesS3Faltantes(configS3).length ? 'local' : 's3';
+  }
+
+  private configS3(): ConfigS3 {
+    return {
+      endpoint: CONSTANTS.AWS_ENDPOINT_URL_S3,
+      region: CONSTANTS.AWS_REGION,
+      accessKeyId: CONSTANTS.AWS_ACCESS_KEY_ID,
+      secretAccessKey: CONSTANTS.AWS_SECRET_ACCESS_KEY,
+      bucket: CONSTANTS.S3_BUCKET,
+      forcePathStyle: CONSTANTS.S3_FORCE_PATH_STYLE,
+    };
   }
 }

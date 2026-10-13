@@ -16,6 +16,8 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "test:cov": "jest --coverage",
+    "test:integracion": "jest --config ./test/jest-integracion.json --runInBand",
+    "medir": "ts-node --transpile-only test/mediciones/medir.ts",
     "typeorm": "ts-node -r tsconfig-paths/register ./node_modules/typeorm/cli.js",
     "migration:generate": "npm run typeorm -- migration:generate -d src/common/configuration/typeorm.config.ts src/migrations/UpdateDB",
     "migration:run": "npm run typeorm -- migration:run -d src/common/configuration/typeorm.config.ts",

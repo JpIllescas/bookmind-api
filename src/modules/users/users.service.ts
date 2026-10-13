@@ -2,6 +2,8 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
+import { CONSTANTS } from '../../common/configuration/constants';
+import { ProveedorLlm } from '../../common/enums/llm-provider.enum';
 import { GuardarPreferenciasDto } from './dto/guardar-preferencias.dto';
 import { User } from './entities/user.entity';
 
@@ -24,5 +26,26 @@ export class UsersService {
     usuario.preferences = dto;
     await this.usuarios.save(usuario);
     return dto;
+  }
+
+  /** `disponible` es del servidor (LLM_PROVIDER); `activada`, la elección del estudiante. */
+  async ayudaGemini(userId: string): Promise<{ activada: boolean; disponible: boolean }> {
+    const usuario = await this.usuarios.findOne({
+      where: { id: userId },
+      select: { id: true, usarGemini: true },
+    });
+    if (!usuario) throw new NotFoundException('Usuario no encontrado.');
+    return { activada: usuario.usarGemini, disponible: CONSTANTS.LLM_PROVIDER === ProveedorLlm.Gemini };
+  }
+
+  async guardarAyudaGemini(userId: string, activada: boolean) {
+    await this.usuarios.update({ id: userId }, { usarGemini: activada });
+    return this.ayudaGemini(userId);
+  }
+
+  /** Gemini solo entra si el servidor lo tiene y el estudiante no lo apagó. */
+  async usaGemini(userId: string): Promise<boolean> {
+    const { activada, disponible } = await this.ayudaGemini(userId);
+    return activada && disponible;
   }
 }

@@ -12,6 +12,7 @@ import { CompartirController } from './compartir.controller';
 import { ChatService } from './chat.service';
 import { ChatMessage } from './entities/chat-message.entity';
 import { Conversation } from './entities/conversation.entity';
+import { LlamadaLlm } from './entities/llamada-llm.entity';
 import { GeminiProvider } from './providers/gemini.provider';
 import { LLM_PROVIDER, LlmProvider } from './providers/llm-provider.interface';
 import { MockProvider } from './providers/mock.provider';
@@ -20,6 +21,7 @@ import { ConversacionesService } from './services/conversaciones.service';
 import { IntencionService } from './services/intencion.service';
 import { MetricasLlmService } from './services/metricas-llm.service';
 import { PromptService } from './services/prompt.service';
+import { RespuestaExtractivaService } from './services/respuesta-extractiva.service';
 import { ElevenLabsService } from './services/elevenlabs.service';
 
 const proveedorLlm: Provider = {
@@ -47,7 +49,7 @@ const proveedorLlm: Provider = {
 
 @Module({
   imports: [
-    TypeOrmModule.forFeature([ChatMessage, Conversation]),
+    TypeOrmModule.forFeature([ChatMessage, Conversation, LlamadaLlm]),
     DocumentsModule,
     AnclajeModule,
     UsersModule,
@@ -62,6 +64,7 @@ const proveedorLlm: Provider = {
     MetricasLlmService,
     proveedorLlm,
     ElevenLabsService,
+    RespuestaExtractivaService,
   ],
   exports: [LLM_PROVIDER, PromptService, ContextoService],
 })

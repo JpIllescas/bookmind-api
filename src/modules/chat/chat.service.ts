@@ -18,6 +18,7 @@ import type { LlmProvider } from './providers/llm-provider.interface';
 import { ConversacionesService } from './services/conversaciones.service';
 import { MaterialPedido, IntencionService, TipoDiagramaPedido } from './services/intencion.service';
 import { PromptService } from './services/prompt.service';
+import { RespuestaExtractivaService } from './services/respuesta-extractiva.service';
 
 // Por encima de esto se recupera por fragmentos; hasta aquí el modelo lee el libro entero.
 const MAXIMO_ZERO_RAG = 150_000;
@@ -85,6 +86,7 @@ export class ChatService {
     private readonly intencion: IntencionService,
     private readonly usuarios: UsersService,
     private readonly conversaciones: ConversacionesService,
+    private readonly extractiva: RespuestaExtractivaService,
   ) {}
 
   /** Respuesta completa de una vez; el camino sin streaming sigue existiendo para la API. */
@@ -103,8 +105,17 @@ export class ChatService {
       return this.pedirMaterial(userId, conversacion, mensaje, materiales, idioma);
     }
 
-    const turno = await this.prepararTurno(userId, conversacion, mensaje, this.intencion.detectarDiagrama(mensaje), idioma, modo);
-    const respuesta = await this.llm.responder(this.peticionDe(turno, mensaje));
+    const diagrama = this.intencion.detectarDiagrama(mensaje);
+    const turno = (await this.usuarios.usaGemini(userId))
+      ? await this.prepararTurno(userId, conversacion, mensaje, diagrama, idioma, modo)
+      : null;
+    const respuesta = turno
+      ? await this.llm.responder(this.peticionDe(turno, mensaje))
+      : await this.extractiva.responder(conversacion.documentId, mensaje, {
+          idioma,
+          tutor: modo === 'tutor',
+          pidioDiagrama: diagrama !== null,
+        });
     const guardada = await this.cerrarTurno(userId, conversacion, mensaje, respuesta);
 
     return {
@@ -115,7 +126,7 @@ export class ChatService {
       groundingScore: guardada.groundingScore,
       citations: guardada.citations ?? [],
       flaggedClaims: guardada.flaggedClaims ?? [],
-      contextoParcial: turno.esParcial,
+      contextoParcial: turno?.esParcial ?? false,
     };
   }
 
@@ -145,7 +156,11 @@ export class ChatService {
       return;
     }
 
-    const turno = await this.prepararTurno(userId, conversacion, mensaje, this.intencion.detectarDiagrama(mensaje), idioma, modo);
+    const diagrama = this.intencion.detectarDiagrama(mensaje);
+    // Sin la ayuda de Gemini no se arma el prompt: la respuesta sale de los pasajes recuperados.
+    const turno = (await this.usuarios.usaGemini(userId))
+      ? await this.prepararTurno(userId, conversacion, mensaje, diagrama, idioma, modo)
+      : null;
 
     const mensajeUsuario = await this.mensajes.save(
       this.mensajes.create({
@@ -160,10 +175,20 @@ export class ChatService {
 
     emitir({ tipo: 'inicio', conversationId: conversacion.id, mensajeUsuarioId: mensajeUsuario.id });
 
-    const peticion = { ...this.peticionDe(turno, mensaje), senal };
-    const flujo = this.llm.responderStream
-      ? this.llm.responderStream(peticion)
-      : streamDesdeRespuesta(this.llm, peticion);
+    let flujo: AsyncIterable<string>;
+    if (turno) {
+      const peticion = { ...this.peticionDe(turno, mensaje), senal };
+      flujo = this.llm.responderStream ? this.llm.responderStream(peticion) : streamDesdeRespuesta(this.llm, peticion);
+    } else {
+      flujo = this.enTrozos(
+        this.extractiva.responder(conversacion.documentId, mensaje, {
+          idioma,
+          tutor: modo === 'tutor',
+          pidioDiagrama: diagrama !== null,
+        }),
+        senal,
+      );
+    }
 
     let texto = '';
 
@@ -207,9 +232,18 @@ export class ChatService {
     emitir({
       tipo: 'fin',
       id: guardada.id,
-      contextoParcial: turno.esParcial,
+      contextoParcial: turno?.esParcial ?? false,
       titulo: actualizada.titulo,
     });
+  }
+
+  /** La respuesta extractiva sale entera de una vez; en trozos se ve igual que la del modelo. */
+  private async *enTrozos(respuesta: Promise<string>, senal: AbortSignal): AsyncIterable<string> {
+    const palabras = (await respuesta).split(' ');
+    for (let i = 0; i < palabras.length; i += 4) {
+      if (senal.aborted) return;
+      yield palabras.slice(i, i + 4).join(' ') + (i + 4 < palabras.length ? ' ' : '');
+    }
   }
 
   async accionesRapidas(userId: string, documentId: string, idioma: 'es' | 'en' = 'es'): Promise<string[]> {

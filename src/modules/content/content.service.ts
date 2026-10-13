@@ -87,6 +87,9 @@ interface Anclados<T> {
 /** Los tipos que Gemini sabe producir solo desde el texto, cuando el motor no responde. */
 const CON_RESPALDO_GEMINI: GeneratedContentType[] = ['summary', 'flashcards', 'quiz'];
 
+// Un resumen parafraseado ancla más bajo que una cita literal: se tolera hasta un tercio de afirmaciones dudosas.
+const MAXIMO_DUDOSAS_RESUMEN = 1 / 3;
+
 const GENERADOR_POR_TIPO: Partial<Record<GeneratedContentType, TipoEstudio>> = {
   summary: 'summary',
   flashcards: 'flashcards',
@@ -123,8 +126,14 @@ export class ContentService {
   async generar(userId: string, documentId: string, type: GeneratedContentType, idioma: 'es' | 'en' = 'es') {
     const document = await this.documents.obtenerConTexto(userId, documentId);
     const preferencias = await this.users.obtenerPreferencias(userId);
+    const usarGemini = await this.users.usaGemini(userId);
 
     if (type === 'mind_map' || type === 'concept_map') {
+      if (!usarGemini) {
+        throw new BadRequestException(
+          'Los mapas necesitan la ayuda de Gemini para redactarse. Actívala en el interruptor del Studio y vuelve a pedirlo.',
+        );
+      }
       const content = await this.generarDiagrama(type, document, preferencias, idioma);
       return this.contents.save(this.contents.create({ documentId, userId, type, content }));
     }
@@ -143,9 +152,15 @@ export class ContentService {
 
     if (motor) {
       content =
-        (await this.mejorarConGemini(type, motor, document, preferencias)) ??
+        (usarGemini ? await this.mejorarConGemini(type, motor, document, preferencias) : null) ??
         { ...motor, origen: 'motor' };
     } else {
+      if (!usarGemini) {
+        throw new ServiceUnavailableException(
+          'El motor de estudio no está disponible ahora mismo y la ayuda de Gemini está desactivada. ' +
+            'Vuelve a intentarlo en un momento, o activa la ayuda de Gemini en el Studio.',
+        );
+      }
       if (!CON_RESPALDO_GEMINI.includes(type)) {
         throw new ServiceUnavailableException(
           'El motor de estudio no está disponible ahora mismo. Vuelve a intentarlo en un momento.',
@@ -153,7 +168,7 @@ export class ContentService {
       }
 
       this.logger.warn(`Motor de estudio caído: ${type} de ${documentId} lo genera solo Gemini.`);
-      const generado = this.normalizar(type, await this.pedirAGemini(type, document, preferencias));
+      const generado = this.normalizar(type, await this.pedirAGemini(type, document, paginas, preferencias));
       content = { ...(await this.anclar(documentId, generado)), origen: 'gemini' };
     }
 
@@ -300,7 +315,7 @@ export class ContentService {
     preferencias: PreferenciasEstudio | null,
     idioma: 'es' | 'en',
   ): Promise<Contenido> {
-    const contexto = await this.contexto.representativo(document.id, document.extractedText);
+    const contexto = await this.contextoFiable(document, await this.capitulos.paginasDe(document.id));
     const clase = type === 'mind_map' ? 'mind map' : 'concept map';
     const tituloPorDefecto = idioma === 'en'
       ? clase
@@ -390,6 +405,16 @@ export class ContentService {
           maxTokens: 8192,
         });
 
+        const verificado = await this.anclaje.verificar(document.id, texto);
+        const dudosas = verificado.flaggedClaims.length / Math.max(verificado.citations.length, 1);
+        if (verificado.groundingScore !== null && dudosas > MAXIMO_DUDOSAS_RESUMEN) {
+          this.logger.warn(
+            `Resumen de Gemini descartado en ${document.id}: ${verificado.flaggedClaims.length} ` +
+              `de ${verificado.citations.length} afirmaciones no se apoyan en el libro.`,
+          );
+          return null;
+        }
+
         return {
           texto: texto.trim(),
           puntos: motor.puntos,
@@ -415,14 +440,18 @@ export class ContentService {
 
         if (nuevas.length !== motor.tarjetas.length) return null;
 
-        return {
-          tarjetas: motor.tarjetas.map((tarjeta, i) => ({
+        const tarjetas = await this.conservarAncladas(
+          document.id,
+          motor.tarjetas,
+          motor.tarjetas.map((tarjeta, i) => ({
             ...tarjeta,
             pregunta: String(nuevas[i]?.pregunta ?? '').trim() || tarjeta.pregunta,
             respuesta: String(nuevas[i]?.respuesta ?? '').trim() || tarjeta.respuesta,
           })),
-          origen: 'gemini',
-        };
+          (tarjeta) => `${tarjeta.pregunta} ${tarjeta.respuesta}`,
+        );
+
+        return tarjetas ? { tarjetas, origen: 'gemini' } : null;
       }
 
       if ('preguntas' in motor) {
@@ -442,13 +471,17 @@ export class ContentService {
 
         if (nuevas.length !== motor.preguntas.length) return null;
 
-        return {
-          preguntas: motor.preguntas.map((pregunta, i) => ({
+        const preguntas = await this.conservarAncladas(
+          document.id,
+          motor.preguntas,
+          motor.preguntas.map((pregunta, i) => ({
             ...pregunta,
             pregunta: String(nuevas[i]?.pregunta ?? '').trim() || pregunta.pregunta,
           })),
-          origen: 'gemini',
-        };
+          (pregunta) => `${pregunta.pregunta} ${pregunta.opciones[pregunta.correcta]}`,
+        );
+
+        return preguntas ? { preguntas, origen: 'gemini' } : null;
       }
     } catch (error) {
       // Degradación elegante: el material del motor ya es válido por sí solo.
@@ -460,14 +493,70 @@ export class ContentService {
     return null;
   }
 
+  /**
+   * Cada ítem reescrito se vuelve a anclar: se queda si supera el umbral o si no ancla peor que el
+   * del motor. Null si ninguno sobrevivió, para que el material conserve el origen "motor".
+   */
+  private async conservarAncladas<T>(
+    documentId: string,
+    delMotor: T[],
+    reescritos: T[],
+    afirmacionDe: (item: T) => string,
+  ): Promise<T[] | null> {
+    const citas = await this.anclaje.anclarItems(
+      documentId,
+      [...reescritos, ...delMotor].map(afirmacionDe),
+    );
+    if (!citas) return null;
+
+    let conservados = 0;
+    const resultado = reescritos.map((item, i) => {
+      const nueva = citas[i].score;
+      const original = citas[delMotor.length + i].score;
+      if (nueva >= CONSTANTS.GROUNDING_THRESHOLD || nueva >= original) {
+        conservados++;
+        return item;
+      }
+      return delMotor[i];
+    });
+
+    if (conservados < reescritos.length) {
+      this.logger.warn(
+        `Documento ${documentId}: ${reescritos.length - conservados} reescrituras de Gemini se alejaron del libro; quedan las del motor.`,
+      );
+    }
+    return conservados > 0 ? resultado : null;
+  }
+
+  /** Solo las páginas con OCR fiable llegan a Gemini, igual que al motor. */
+  private contextoFiable(document: Document, paginas: PaginaEstudio[]) {
+    const fiables = paginas.filter(
+      (pagina) => pagina.confianza == null || pagina.confianza >= CONSTANTS.OCR_CONFIANZA_MINIMA,
+    );
+
+    if (paginas.length > 0 && fiables.length === 0) {
+      throw new BadRequestException(
+        'Las páginas de este libro se digitalizaron con poca calidad y no alcanzan para armar este material. ' +
+          'Prueba con un escaneo más nítido.',
+      );
+    }
+
+    // Sin fragmentos (libro viejo o a medio indexar) solo queda el texto completo.
+    const texto = fiables.length
+      ? fiables.map((pagina) => `[Página ${pagina.pagina}]\n${pagina.texto}`).join('\n\n')
+      : document.extractedText;
+
+    return this.contexto.representativo(document.id, texto, CONSTANTS.OCR_CONFIANZA_MINIMA);
+  }
+
   /** Camino de respaldo: Gemini genera desde una muestra de todo el libro. */
   private pedirAGemini(
     type: GeneratedContentType,
     document: Document,
+    paginas: PaginaEstudio[],
     preferencias: PreferenciasEstudio | null,
   ): Promise<string> {
-    return this.contexto
-      .representativo(document.id, document.extractedText)
+    return this.contextoFiable(document, paginas)
       .then((contexto) =>
         this.llm.responder({
           systemPrompt:

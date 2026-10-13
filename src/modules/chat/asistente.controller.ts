@@ -12,9 +12,7 @@ import { LLM_PROVIDER } from './providers/llm-provider.interface';
 import type { LlmProvider } from './providers/llm-provider.interface';
 import { MetricasLlmService } from './services/metricas-llm.service';
 import { PromptService } from './services/prompt.service';
-
-/** Debajo de esto el pasaje habla de otra cosa. */
-const MINIMO_PARECIDO = 0.78;
+import { pasajesUtiles, RespuestaExtractivaService } from './services/respuesta-extractiva.service';
 
 /** Estado del motor conversacional visto desde las llamadas de BookMind. */
 @ApiTags('asistente')
@@ -27,6 +25,7 @@ export class AsistenteController {
     private readonly anclaje: AnclajeService,
     private readonly prompts: PromptService,
     private readonly usuarios: UsersService,
+    private readonly extractiva: RespuestaExtractivaService,
     @Inject(LLM_PROVIDER) private readonly llm: LlmProvider,
   ) {}
 
@@ -43,7 +42,7 @@ export class AsistenteController {
     );
 
     // Una coincidencia literal (un nombre, una fecha) vale aunque el coseno sea bajo.
-    const utiles = pasajes.filter((p) => p.lexico || p.score >= MINIMO_PARECIDO);
+    const utiles = pasajesUtiles(pasajes);
 
     if (utiles.length === 0) {
       return {
@@ -54,13 +53,17 @@ export class AsistenteController {
       };
     }
 
-    const preferencias = await this.usuarios.obtenerPreferencias(usuario.id);
-
-    const respuesta = await this.llm.responder({
-      systemPrompt: this.prompts.construirBiblioteca(utiles, preferencias, dto.idioma),
-      historial: [],
-      mensaje: dto.pregunta,
-    });
+    const respuesta = (await this.usuarios.usaGemini(usuario.id))
+      ? await this.llm.responder({
+          systemPrompt: this.prompts.construirBiblioteca(
+            utiles,
+            await this.usuarios.obtenerPreferencias(usuario.id),
+            dto.idioma,
+          ),
+          historial: [],
+          mensaje: dto.pregunta,
+        })
+      : this.extractiva.enBiblioteca(dto.pregunta, utiles, dto.idioma);
 
     return {
       respuesta,

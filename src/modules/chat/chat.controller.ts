@@ -14,6 +14,7 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import { ApiBearerAuth, ApiTags } from '@nestjs/swagger';
+import { Throttle } from '@nestjs/throttler';
 import type { Request, Response } from 'express';
 
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -43,6 +44,8 @@ export class ChatController {
   }
 
   @Post('speech')
+  // Cada llamada gasta créditos de ElevenLabs: el límite global (120/min) es demasiado holgado.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   async speech(@Body() dto: SpeechDto, @Res() respuesta: Response) {
     const audio = await this.elevenlabs.sintetizar(dto.text, dto.idioma);
     respuesta.setHeader('Content-Type', 'audio/mpeg');

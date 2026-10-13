@@ -33,8 +33,11 @@ import {
   type PaginaExtraida,
 } from './services/extraccion.service';
 import { MENSAJES_OCR, OcrFallidoError, OcrService } from './services/ocr.service';
-
-const CARACTERES_PARA_CLASIFICAR = 200_000;
+import {
+  CARACTERES_PARA_CLASIFICAR,
+  ReclasificacionService,
+  camposDeClasificacion,
+} from './services/reclasificacion.service';
 
 @Injectable()
 export class DocumentsService implements OnApplicationBootstrap {
@@ -49,6 +52,7 @@ export class DocumentsService implements OnApplicationBootstrap {
     private readonly almacenamiento: AlmacenamientoService,
     private readonly capitulos: CapitulosService,
     private readonly ocr: OcrService,
+    private readonly reclasificacion: ReclasificacionService,
   ) {}
 
   /** Guarda el archivo y deja el trabajo pesado fuera del request. */
@@ -175,11 +179,7 @@ export class DocumentsService implements OnApplicationBootstrap {
         pages: totalPaginas,
         extractedText: textoCompleto,
         textLayer: 'ok',
-        materia: clasificacion?.materia ?? null,
-        nivel: clasificacion?.nivel ?? null,
-        classifierConfidence: clasificacion?.confidence ?? null,
-        classifierFeatures: clasificacion?.featureImportance ?? undefined,
-        tintColor: this.elegirTinte(clasificacion?.materia ?? null),
+        ...camposDeClasificacion(clasificacion),
         paginasOcr: ocr?.paginasOcr ?? 0,
         confianzaOcrMedia: ocr?.confianzaMedia ?? null,
         origenPaginas: ocr && ocr.paginasOcr > 0 ? ocr.origen : null,
@@ -286,6 +286,11 @@ export class DocumentsService implements OnApplicationBootstrap {
     if (pendientes.length > 0) {
       this.logger.log(`Se retomaron ${pendientes.length} documento(s) a medias.`);
     }
+
+    // En segundo plano: el arranque no espera al ml-service.
+    void this.reclasificacion.ponerAlDia().catch((error: unknown) =>
+      this.logger.warn(`No se pudo poner al día la materia de los libros: ${String(error)}`),
+    );
   }
 
   async listar(userId: string) {

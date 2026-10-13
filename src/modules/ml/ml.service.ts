@@ -20,6 +20,8 @@ export interface ResultadoClasificacion {
   featureImportance: FeatureImportancia[];
   probabilidades: Record<string, number>;
   legibilidad: Record<string, number | string>;
+  /** Fecha de entrenamiento del modelo que respondió. */
+  entrenadoEn: string | null;
 }
 
 export type EstadoTrabajoOcr = 'pendiente' | 'procesando' | 'listo' | 'error';
@@ -73,6 +75,15 @@ export interface ResultadoEstudio<T = unknown> {
   paginasExcluidas: number;
 }
 
+/** Lo que informa GET /health del ml-service. */
+export interface SaludMl {
+  modelo_cargado: boolean;
+  modelo_demo: boolean;
+  entrenado_en: string | null;
+  tesseract_instalado: boolean;
+  ocr_idioma_disponible: boolean;
+}
+
 /** Cliente del microservicio de clasificación (pieza 3). */
 @Injectable()
 export class MlService {
@@ -83,15 +94,13 @@ export class MlService {
     this.baseUrl = CONSTANTS.ML_SERVICE_URL.replace(/\/+$/, '');
   }
 
-  async estaDisponible(): Promise<boolean> {
+  /** Null si el ml-service no responde: /api/health lo reporta como caído, sin lanzar. */
+  async salud(): Promise<SaludMl | null> {
     try {
-      const respuesta = await this.peticion('/health', {
-        method: 'GET',
-        timeoutMs: 3_000,
-      });
-      return respuesta.ok;
+      const respuesta = await this.peticion('/health', { method: 'GET', timeoutMs: 3_000 });
+      return respuesta.ok ? ((await respuesta.json()) as SaludMl) : null;
     } catch {
-      return false;
+      return null;
     }
   }
 
@@ -136,6 +145,7 @@ export class MlService {
       // Sin Content-Type a mano: fetch pone el boundary del multipart.
       respuesta = await fetch(`${this.baseUrl}/ocr/trabajos`, {
         method: 'POST',
+        headers: this.cabeceras(),
         body: formulario,
         signal: AbortSignal.timeout(Math.ceil(OCR_SUBIDA_BASE_MS + megas * OCR_SUBIDA_POR_MB_MS)),
       });
@@ -259,11 +269,22 @@ export class MlService {
     ruta: string,
     opciones: { method: string; body?: string; timeoutMs: number },
   ): Promise<Response> {
-    return fetch(`${this.baseUrl}${ruta}`, {
+    const respuesta = await fetch(`${this.baseUrl}${ruta}`, {
       method: opciones.method,
-      headers: opciones.body ? { 'Content-Type': 'application/json' } : undefined,
+      headers: this.cabeceras(opciones.body ? { 'Content-Type': 'application/json' } : {}),
       body: opciones.body,
       signal: AbortSignal.timeout(opciones.timeoutMs),
     });
+
+    if (respuesta.status === 401) {
+      this.logger.error(
+        `El ml-service rechazó ${ruta}: ML_SERVICE_TOKEN del backend no coincide con el del ml-service.`,
+      );
+    }
+    return respuesta;
+  }
+
+  private cabeceras(base: Record<string, string> = {}): Record<string, string> {
+    return CONSTANTS.ML_SERVICE_TOKEN ? { ...base, 'X-ML-Token': CONSTANTS.ML_SERVICE_TOKEN } : base;
   }
 }

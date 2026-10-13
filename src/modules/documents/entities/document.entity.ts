@@ -99,6 +99,10 @@ export class Document {
   @Column({ name: 'classifier_features', type: 'jsonb', nullable: true })
   classifierFeatures: unknown | null;
 
+  /** Fecha de entrenamiento del modelo que lo clasificó; null = nunca o con un modelo desconocido. */
+  @Column({ name: 'clasificado_con', type: 'varchar', nullable: true })
+  clasificadoCon: string | null;
+
   @Column({ name: 'tint_color', default: '#B4552E' })
   tintColor: string;
 

@@ -30,6 +30,10 @@ export class User {
   @Column({ type: 'jsonb', nullable: true, default: null })
   preferences: PreferenciasEstudio | null;
 
+  /** Si el estudiante quiere que Gemini redacte; sin él, todo sale del motor propio. */
+  @Column({ name: 'usar_gemini', type: 'boolean', default: true })
+  usarGemini: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 

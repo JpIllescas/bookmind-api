@@ -14,6 +14,7 @@ import { AlmacenamientoService } from './services/almacenamiento.service';
 import { CapitulosService } from './services/capitulos.service';
 import { ExtraccionService, type PaginaExtraida } from './services/extraccion.service';
 import { MENSAJES_OCR, OcrFallidoError, OcrService } from './services/ocr.service';
+import { ReclasificacionService } from './services/reclasificacion.service';
 
 function crearRepositorioFalso() {
   return {
@@ -43,6 +44,7 @@ describe('DocumentsService', () => {
   let extraccion: { extraer: jest.Mock; consolidar: jest.Mock };
   let ocr: { digitalizar: jest.Mock };
   let ml: { clasificar: jest.Mock };
+  let reclasificacion: { ponerAlDia: jest.Mock };
   let anclaje: { indexar: jest.Mock };
   let almacenamiento: {
     guardarDefinitivo: jest.Mock;
@@ -72,6 +74,7 @@ describe('DocumentsService', () => {
     };
     ocr = { digitalizar: jest.fn().mockResolvedValue([]) };
     ml = { clasificar: jest.fn().mockResolvedValue(null) };
+    reclasificacion = { ponerAlDia: jest.fn().mockResolvedValue(0) };
     anclaje = { indexar: jest.fn().mockResolvedValue([0.1, 0.2, 0.3]) };
     almacenamiento = {
       guardarDefinitivo: jest.fn().mockResolvedValue('usuario-a/doc-1.pdf'),
@@ -89,6 +92,7 @@ describe('DocumentsService', () => {
         { provide: AnclajeService, useValue: anclaje },
         { provide: AlmacenamientoService, useValue: almacenamiento },
         { provide: OcrService, useValue: ocr },
+        { provide: ReclasificacionService, useValue: reclasificacion },
         {
           provide: CapitulosService,
           useValue: { guardar: jest.fn().mockResolvedValue([]), listar: jest.fn() },
@@ -155,6 +159,7 @@ describe('DocumentsService', () => {
         nivel: Nivel.PrimariaAlta,
         confidence: 0.91,
         featureImportance: [{ feature: 'palabra:célula', contribucion: 1.2, valor: 0.4 }],
+        entrenadoEn: '2026-10-11T00:00:00+00:00',
       });
 
       await servicio.encolar('usuario-a', archivoFalso);
@@ -167,6 +172,8 @@ describe('DocumentsService', () => {
           materia: Materia.CienciasNaturales,
           nivel: Nivel.PrimariaAlta,
           classifierConfidence: 0.91,
+          // Sin esto, el siguiente arranque lo reclasificaría por desconocer su modelo.
+          clasificadoCon: '2026-10-11T00:00:00+00:00',
         }),
       );
       expect(documentos.update).toHaveBeenCalledWith(
@@ -480,6 +487,15 @@ describe('DocumentsService', () => {
       });
       expect(ocr.digitalizar).toHaveBeenCalledWith('doc-ocr', expect.any(Buffer), [1]);
       expect(documentos.update).toHaveBeenLastCalledWith('doc-ocr', expect.objectContaining({ processingStatus: 'ready' }));
+    });
+
+    it('al arrancar pone al día la materia sin esperar al ml-service', async () => {
+      documentos.find.mockResolvedValue([]);
+      reclasificacion.ponerAlDia.mockReturnValue(new Promise(() => undefined));
+
+      await servicio.onApplicationBootstrap();
+
+      expect(reclasificacion.ponerAlDia).toHaveBeenCalledTimes(1);
     });
   });
 

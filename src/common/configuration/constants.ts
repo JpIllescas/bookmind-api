@@ -47,6 +47,15 @@ function numeroEnRango(nombre: string, porDefecto: number, minimo: number, maxim
   return valor;
 }
 
+/** Un valor mal escrito se detecta al arrancar; vacío deja que el almacenamiento elija solo. */
+function validarDriverAlmacenamiento(valor: string | undefined): 'local' | 's3' | '' {
+  const driver = valor?.trim().toLowerCase() ?? '';
+  if (driver !== '' && driver !== 'local' && driver !== 's3') {
+    throw new Error(`STORAGE_DRIVER="${valor}" no es válido. Usa "local" o "s3", o déjalo vacío.`);
+  }
+  return driver;
+}
+
 export const CONSTANTS = {
   // Entorno
   ENV: configService.getOrThrow<string>('ENV'),
@@ -98,19 +107,29 @@ export const CONSTANTS = {
   EMBEDDING_MODEL:
     configService.get<string>('EMBEDDING_MODEL') ??
     'Xenova/multilingual-e5-small',
+  // Calibrado en test/mediciones (anclaje.json): separa lo del libro de lo ajeno, no los datos inventados del mismo tema.
   GROUNDING_THRESHOLD: Number(
-    configService.get<string>('GROUNDING_THRESHOLD') ?? '0.72',
+    configService.get<string>('GROUNDING_THRESHOLD') ?? '0.86',
   ),
 
   // Clasificador (pieza 3)
   ML_SERVICE_URL:
     configService.get<string>('ML_SERVICE_URL') ?? 'http://localhost:8000',
+  // Vacío solo en desarrollo: debe coincidir con el ML_SERVICE_TOKEN del ml-service
+  ML_SERVICE_TOKEN: configService.get<string>('ML_SERVICE_TOKEN')?.trim() ?? '',
   // OCR (lo ejecuta el ml-service; OCR_DPI y OCR_WORKERS se configuran allá)
   OCR_ENABLED:
     (configService.get<string>('OCR_ENABLED') ?? 'true') === 'true',
   OCR_MIN_CARACTERES: numeroEnRango('OCR_MIN_CARACTERES', 50, 0, 5_000),
   OCR_CONFIANZA_MINIMA: numeroEnRango('OCR_CONFIANZA_MINIMA', 0.7, 0, 1),
+
+  // Peticiones por minuto y cliente; se sube solo para medir capacidad con k6.
+  THROTTLE_LIMIT: numeroEnRango('THROTTLE_LIMIT', 120, 1, 1_000_000),
   OCR_MAX_PAGINAS: numeroEnRango('OCR_MAX_PAGINAS', 600, 1, 5_000),
+
+  // Almacenamiento de libros: vacío = s3 si están sus variables, si no local
+  STORAGE_DRIVER: validarDriverAlmacenamiento(configService.get<string>('STORAGE_DRIVER')),
+  UPLOAD_PATH: configService.get<string>('UPLOAD_PATH') || './uploads',
 
   // Neon Object Storage (S3-compatible)
   AWS_ENDPOINT_URL_S3: configService.get<string>('AWS_ENDPOINT_URL_S3') ?? '',

@@ -6,7 +6,7 @@ import { CONSTANTS } from '../../common/configuration/constants';
 import { Cita } from '../chat/entities/chat-message.entity';
 import { DocumentChunk } from '../documents/entities/document-chunk.entity';
 import { PaginaExtraida } from '../documents/services/extraccion.service';
-import { BusquedaLexicaService } from './services/busqueda-lexica.service';
+import { BusquedaLexicaService, CoincidenciasLexicas } from './services/busqueda-lexica.service';
 import { EmbeddingsService } from './services/embeddings.service';
 import { FragmentacionService } from './services/fragmentacion.service';
 import { fusionarRangos } from './services/fusion-rrf';
@@ -27,7 +27,7 @@ export interface Pasaje {
 export interface PasajeRecuperado extends Pasaje {
   /** Coseno con la pregunta: sirve de umbral de "hay algo que responder". */
   score: number;
-  /** True si además contiene las palabras de la pregunta (búsqueda léxica). */
+  /** True si contiene todas las palabras de la pregunta; el reintento con cualquiera no cuenta. */
   lexico: boolean;
 }
 
@@ -50,6 +50,15 @@ const FRASES_META = [
   /(el|este) libro no (habla|menciona|trata|incluye|contiene)/i,
   /puedes (revisar|consultar|ver|encontrar)(lo| esto| este dato| más)? en (el|la|las|los)? ?(capítulo|página|sección)/i,
   /(lo|esto) (encuentras|puedes ver) en (el|la) (capítulo|página|sección)/i,
+  // Los textos fijos del chat sin Gemini: el rechazo no es una afirmación sobre el libro.
+  /^no encontré (en este libro|nada)/i,
+  /prueba con otras palabras/i,
+  /^esto es lo que (dice el libro|encontré)/i,
+  /respuesta armada con pasajes del libro/i,
+  /^i could not find/i,
+  /try different words/i,
+  /^this is what (the book says|i found)/i,
+  /answer built from passages of the book/i,
 ];
 
 @Injectable()
@@ -145,12 +154,21 @@ export class AnclajeService {
   }
 
   /** Muestra representativa de todo el libro, en orden de lectura y dentro del presupuesto. */
-  async representativos(documentId: string, presupuestoCaracteres: number): Promise<Pasaje[]> {
-    const fragmentos = await this.fragmentos.find({
+  async representativos(
+    documentId: string,
+    presupuestoCaracteres: number,
+    confianzaMinima?: number,
+  ): Promise<Pasaje[]> {
+    const todos = await this.fragmentos.find({
       where: { documentId },
-      select: { indice: true, pagina: true, texto: true, embedding: true },
+      select: { indice: true, pagina: true, texto: true, embedding: true, confianzaOcr: true },
       order: { indice: 'ASC' },
     });
+    // Con confianza mínima, las páginas de OCR dudoso no entran en la muestra; null es texto nativo.
+    const fragmentos =
+      confianzaMinima === undefined
+        ? todos
+        : todos.filter((f) => f.confianzaOcr == null || f.confianzaOcr >= confianzaMinima);
 
     const elegidos = this.muestreo.seleccionar(
       fragmentos.map((f) => ({ embedding: f.embedding, caracteres: f.texto.length })),
@@ -229,7 +247,7 @@ export class AnclajeService {
   private fusionar<T extends Candidato>(
     candidatos: T[],
     vector: number[],
-    lexicos: string[],
+    lexicos: CoincidenciasLexicas,
     cuantos: number,
   ): { candidato: T; score: number; lexico: boolean }[] {
     const conCoseno = candidatos.map((candidato) => ({
@@ -242,8 +260,9 @@ export class AnclajeService {
       .slice(0, CANDIDATOS_POR_LADO)
       .map(({ candidato }) => candidato.id);
 
-    const fusionados = fusionarRangos([densos, lexicos]);
-    const enLexico = new Set(lexicos);
+    const fusionados = fusionarRangos([densos, lexicos.ids]);
+    // Una sola palabra común (reintento con OR) no prueba que el pasaje hable de la pregunta.
+    const enLexico = new Set(lexicos.conTodas ? lexicos.ids : []);
 
     return conCoseno
       .filter(({ candidato }) => fusionados.has(candidato.id))

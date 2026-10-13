@@ -22,12 +22,13 @@ export class ContextoService {
   async representativo(
     documentId: string,
     textoCompleto: string,
+    confianzaMinima?: number,
   ): Promise<ContextoRepresentativo> {
     if (textoCompleto.length <= CARACTERES_MAXIMOS) {
       return { contenido: textoCompleto, esParcial: false };
     }
 
-    const pasajes = await this.anclaje.representativos(documentId, CARACTERES_MAXIMOS);
+    const pasajes = await this.anclaje.representativos(documentId, CARACTERES_MAXIMOS, confianzaMinima);
 
     if (pasajes.length === 0) {
       this.logger.warn(

@@ -63,26 +63,33 @@ export class CapitulosService {
 
   /** Reemplaza los capítulos del libro y etiqueta cada fragmento con el suyo. */
   async guardar(documentId: string, detectados: CapituloDetectado[]): Promise<Chapter[]> {
-    await this.capitulos.delete({ documentId });
-    if (detectados.length === 0) return [];
+    // Todo o nada: un fallo a medias dejaría el libro sin capítulos o con fragmentos mal etiquetados.
+    const guardados = await this.capitulos.manager.transaction(async (manager) => {
+      const capitulos = manager.getRepository(Chapter);
+      await capitulos.delete({ documentId });
+      if (detectados.length === 0) return [];
 
-    const guardados = await this.capitulos.save(
-      detectados.map((capitulo) => this.capitulos.create({ documentId, ...capitulo })),
-    );
+      const nuevos = await capitulos.save(
+        detectados.map((capitulo) => capitulos.create({ documentId, ...capitulo })),
+      );
 
-    for (const capitulo of guardados) {
-      await this.fragmentos
-        .createQueryBuilder()
-        .update()
-        .set({ chapterId: capitulo.id })
-        .where('document_id = :documentId', { documentId })
-        .andWhere('pagina BETWEEN :inicio AND :fin', {
-          inicio: capitulo.paginaInicio,
-          fin: capitulo.paginaFin,
-        })
-        .execute();
-    }
+      for (const capitulo of nuevos) {
+        await manager
+          .createQueryBuilder()
+          .update(DocumentChunk)
+          .set({ chapterId: capitulo.id })
+          .where('document_id = :documentId', { documentId })
+          .andWhere('pagina BETWEEN :inicio AND :fin', {
+            inicio: capitulo.paginaInicio,
+            fin: capitulo.paginaFin,
+          })
+          .execute();
+      }
 
+      return nuevos;
+    });
+
+    if (guardados.length === 0) return [];
     this.logger.log(`Documento ${documentId}: ${guardados.length} capítulos.`);
 
     return guardados.sort((a, b) => a.orden - b.orden);
