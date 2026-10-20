@@ -87,7 +87,7 @@ describe('AuthService', () => {
         servicio.login({ email: 'a@b.com', password: 'la-incorrecta' }),
       ).rejects.toMatchObject({
         constructor: UnauthorizedException,
-        message: 'Contraseña o correo no correctos',
+        message: 'El correo o la contraseña no son correctos. Revísalos e intenta de nuevo.',
       });
     });
 

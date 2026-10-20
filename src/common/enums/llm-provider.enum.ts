@@ -2,6 +2,6 @@
 export enum ProveedorLlm {
   Gemini = 'gemini',
   Ollama = 'ollama',
-  /** Respuestas simuladas: desarrollar sin API key ni GPU. */
+  /** Sin modelo de lenguaje: todo sale del motor propio, sin respuestas inventadas. */
   Mock = 'mock',
 }

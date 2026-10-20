@@ -1,4 +1,4 @@
-import { NotFoundException } from '@nestjs/common';
+import { NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { Test } from '@nestjs/testing';
 import { getRepositoryToken } from '@nestjs/typeorm';
 
@@ -21,6 +21,7 @@ function crearRepositorioFalso() {
     find: jest.fn<Promise<Document[]>, [unknown]>(),
     findOne: jest.fn<Promise<Document | null>, [unknown]>(),
     update: jest.fn(),
+    delete: jest.fn(),
     create: jest.fn((datos: Partial<Document>) => datos as Document),
     save: jest.fn(
       async (documento: Partial<Document>) => ({ id: 'doc-1', ...documento }) as Document,
@@ -135,6 +136,16 @@ describe('DocumentsService', () => {
       expect(extraccion.extraer).not.toHaveBeenCalled();
 
       await esperarProcesamiento();
+    });
+
+    it('si el almacenamiento no guarda el archivo, no deja una fila pending vacía', async () => {
+      const caido = new ServiceUnavailableException('El almacenamiento de libros no está disponible en este momento.');
+      almacenamiento.guardarDefinitivo.mockRejectedValue(caido);
+
+      await expect(servicio.encolar('usuario-a', archivoFalso)).rejects.toBe(caido);
+
+      expect(documentos.delete).toHaveBeenCalledWith({ id: 'doc-1', userId: 'usuario-a' });
+      expect(extraccion.extraer).not.toHaveBeenCalled();
     });
 
     it('conserva el archivo original para que el visor pueda abrirlo', async () => {

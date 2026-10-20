@@ -67,6 +67,11 @@ export class DocumentsService implements OnApplicationBootstrap {
       throw error;
     }
 
+    const contenido = archivo.buffer ?? archivo.path;
+    if (!contenido) {
+      throw new BadRequestException('No se pudo leer el archivo recibido.');
+    }
+
     const documento = await this.documentos.save(
       this.documentos.create({
         userId,
@@ -90,17 +95,18 @@ export class DocumentsService implements OnApplicationBootstrap {
       }),
     );
 
-    const contenido = archivo.buffer ?? archivo.path;
-    if (!contenido) {
-      throw new BadRequestException('No se pudo leer el archivo recibido.');
+    try {
+      documento.storagePath = await this.almacenamiento.guardarDefinitivo(
+        contenido,
+        userId,
+        documento.id,
+        tipo,
+      );
+    } catch (error) {
+      // Sin archivo no hay libro: una fila "pending" vacía quedaría en la biblioteca hasta reiniciar.
+      await this.documentos.delete({ id: documento.id, userId });
+      throw error;
     }
-
-    documento.storagePath = await this.almacenamiento.guardarDefinitivo(
-      contenido,
-      userId,
-      documento.id,
-      tipo,
-    );
 
     await this.documentos.update(documento.id, {
       storagePath: documento.storagePath,

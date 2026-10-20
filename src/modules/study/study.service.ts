@@ -1,7 +1,8 @@
 import {
+  BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
-  ServiceUnavailableException,
 } from '@nestjs/common';
 import { Inject } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
@@ -16,28 +17,27 @@ import {
 import { PromptService } from '../chat/services/prompt.service';
 import { QuizAttempt } from '../content/entities/quiz-attempt.entity';
 import { DocumentsService } from '../documents/documents.service';
+import { CapitulosService } from '../documents/services/capitulos.service';
 import { UsersService } from '../users/users.service';
 import { CreateStudyPlanDto } from './dto/create-study-plan.dto';
 import { StudyPlan } from './entities/study-plan.entity';
+import { TareaPlan, planDesdeElLibro, tramosDelLibro } from './plan-motor';
 
 const SESIONES = 7;
 
-/** Temas fallados que se le pasan al modelo; más allá de esto el plan se dispersa. */
+/** Preguntas falladas que entran al plan; más allá de esto la sesión de repaso se dispersa. */
 const MAXIMO_A_REPASAR = 6;
-
-interface TareaGenerada {
-  title: string;
-  description?: string;
-  session?: number;
-}
 
 @Injectable()
 export class StudyService {
+  private readonly logger = new Logger(StudyService.name);
+
   constructor(
     @InjectRepository(StudyPlan) private readonly plans: Repository<StudyPlan>,
     @InjectRepository(QuizAttempt)
     private readonly intentos: Repository<QuizAttempt>,
     private readonly documents: DocumentsService,
+    private readonly capitulos: CapitulosService,
     private readonly users: UsersService,
     private readonly prompts: PromptService,
     private readonly contexto: ContextoService,
@@ -60,34 +60,27 @@ export class StudyService {
     );
   }
 
+  /**
+   * El motor arma el plan con el libro real (sus capítulos o páginas y lo que el
+   * estudiante falló); Gemini, si el estudiante lo tiene encendido, solo lo redacta.
+   */
   async generar(userId: string, documentId: string): Promise<StudyPlan> {
     const document = await this.documents.obtenerConTexto(userId, documentId);
-    const preferencias = await this.users.obtenerPreferencias(userId);
     const aRepasar = await this.temasFallados(userId, documentId);
+    const capitulos = await this.capitulos.listar(documentId);
 
-    // Una muestra de todo el libro: el plan cubría solo las primeras páginas.
-    const contexto = await this.contexto.representativo(documentId, document.extractedText);
+    const tramos = tramosDelLibro(capitulos, document.pages, SESIONES - (aRepasar.length > 0 ? 1 : 0));
+    const plan = planDesdeElLibro(document.title, tramos, aRepasar);
+    if (plan.tasks.length === 0) {
+      throw new BadRequestException('Este libro todavía no tiene páginas procesadas para armar un plan. Espera a que termine de prepararse.');
+    }
 
-    const respuesta = await this.llm.responder({
-      systemPrompt: this.prompt(
-        this.prompts.instruccionPreferencias(preferencias),
-        aRepasar,
-        contexto,
-      ),
-      historial: [],
-      mensaje: 'Genera el plan de estudio.',
-    });
-
-    const datos = this.comoPlan(respuesta);
+    const tareas = (await this.users.usaGemini(userId))
+      ? (await this.redactarConGemini(userId, document.id, document.extractedText, plan.tasks)) ?? plan.tasks
+      : plan.tasks;
 
     return this.plans.save(
-      this.plans.create({
-        userId,
-        title: datos.title ?? `Plan: ${document.title}`,
-        targetDate: null,
-        tasks: datos.tasks,
-        active: true,
-      }),
+      this.plans.create({ userId, title: plan.title, targetDate: null, tasks: tareas, active: true }),
     );
   }
 
@@ -115,68 +108,41 @@ export class StudyService {
       .slice(0, MAXIMO_A_REPASAR);
   }
 
-  private prompt(
-    criterios: string,
-    aRepasar: string[],
-    contexto: ContextoRepresentativo,
-  ): string {
-    // Sin esto el plan sale igual para quien domina el libro y para quien no.
-    const refuerzo =
-      aRepasar.length > 0
-        ? `El estudiante ya resolvió un quiz de este libro y falló en esto:\n` +
-          `${aRepasar.map((tema) => `- ${tema}`).join('\n')}\n` +
-          `Dedica las primeras sesiones a eso antes de avanzar con el resto.\n`
-        : '';
-
-    return (
-      `Genera un plan de estudio de ${SESIONES} sesiones sobre este libro. ` +
-      'Devuelve SOLO JSON válido, sin texto alrededor ni ```, con esta forma: ' +
-      '{"title":"...","tasks":[{"title":"...","description":"...","session":1}]}\n' +
-      `${refuerzo}` +
-      `Adapta el plan a estos criterios: ${criterios}\n` +
-      this.contexto.aviso(contexto.esParcial) +
-      'Usa únicamente el contenido del libro:\n' +
-      contexto.contenido
-    );
-  }
-
-  /**
-   * Antes, un JSON ilegible se rellenaba con tareas genéricas que no salían del
-   * libro. Es preferible fallar: un plan inventado no es un plan personalizado.
-   */
-  private comoPlan(crudo: string): { title?: string; tasks: TareaGenerada[] } {
-    const limpio = crudo
-      .replace(/^```json\s*/i, '')
-      .replace(/^```\s*/i, '')
-      .replace(/```\s*$/, '')
-      .trim();
-
-    let datos: { title?: string; tasks?: unknown[] };
-
+  /** Gemini reescribe las descripciones; títulos, páginas y orden son del motor. Null si no pudo. */
+  private async redactarConGemini(
+    userId: string,
+    documentId: string,
+    texto: string,
+    tareas: TareaPlan[],
+  ): Promise<TareaPlan[] | null> {
     try {
-      datos = JSON.parse(limpio) as { title?: string; tasks?: unknown[] };
-    } catch {
-      throw this.malFormato();
+      const preferencias = await this.users.obtenerPreferencias(userId);
+      const contexto: ContextoRepresentativo = await this.contexto.representativo(documentId, texto);
+      const respuesta = await this.llm.responder({
+        systemPrompt:
+          'Este es un plan de estudio armado con el libro. Para cada sesión, escribe una descripción de una o dos ' +
+          'oraciones que diga qué ideas del libro se van a trabajar y cómo estudiarlas. No cambies los títulos, ' +
+          'las páginas ni el orden, y usa solo el contenido del libro. Devuelve SOLO un JSON array con la misma ' +
+          'cantidad de elementos, sin texto alrededor ni ```: [{"description":"..."}]\n' +
+          `Adapta el registro a estos criterios: ${this.prompts.instruccionPreferencias(preferencias)}\n` +
+          `Plan: ${JSON.stringify(tareas.map(({ title, description }) => ({ title, description })))}\n` +
+          this.contexto.aviso(contexto.esParcial) +
+          contexto.contenido,
+        historial: [],
+        mensaje: 'Redacta las descripciones del plan.',
+      });
+
+      const nuevas = JSON.parse(respuesta.replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '').trim()) as unknown;
+      if (!Array.isArray(nuevas) || nuevas.length !== tareas.length) return null;
+
+      return tareas.map((tarea, i) => {
+        const descripcion = String((nuevas[i] as { description?: unknown })?.description ?? '').trim();
+        return descripcion ? { ...tarea, description: descripcion } : tarea;
+      });
+    } catch (error) {
+      // Sin Gemini el plan del motor es igual de válido: se registra y se entrega ese.
+      this.logger.warn(`Plan de ${documentId} sin redactar por Gemini: ${error instanceof Error ? error.message : String(error)}`);
+      return null;
     }
-
-    const tasks = (Array.isArray(datos.tasks) ? datos.tasks : [])
-      .map((tarea) => tarea as Partial<TareaGenerada>)
-      .filter((tarea) => typeof tarea?.title === 'string' && tarea.title.trim() !== '')
-      .map((tarea, indice) => ({
-        title: tarea.title as string,
-        description: tarea.description ?? '',
-        session: typeof tarea.session === 'number' ? tarea.session : indice + 1,
-      }));
-
-    if (tasks.length === 0) throw this.malFormato();
-
-    return { title: datos.title, tasks };
-  }
-
-  private malFormato(): ServiceUnavailableException {
-    return new ServiceUnavailableException(
-      'El asistente devolvió el plan en un formato que no se pudo leer. ' +
-        'Vuelve a generarlo.',
-    );
   }
 }

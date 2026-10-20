@@ -71,8 +71,8 @@ async function bootstrap() {
 
   if (CONSTANTS.LLM_PROVIDER === 'mock') {
     logger.warn(
-      'LLM_PROVIDER=mock: el chat devolverá respuestas simuladas. ' +
-        'Configura gemini u ollama en .env cuando decidas el motor.',
+      'LLM_PROVIDER=mock: sin modelo de lenguaje; el chat, el asistente y el Studio responden con el motor propio. ' +
+        'Configura LLM_PROVIDER=gemini en .env para que Gemini mejore lo que arma el motor.',
     );
   }
 }

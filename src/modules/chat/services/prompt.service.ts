@@ -95,8 +95,8 @@ ${libro.contenido}
   private instruccionDiagrama(tipo: 'mind_map' | 'concept_map'): string {
     return `El estudiante pidió un ${tipo === 'mind_map' ? 'mapa mental' : 'mapa conceptual'}.
 Responde ÚNICAMENTE con un JSON válido, sin Markdown ni bloques de código, con esta forma exacta:
-{"content":"explicación breve basada en el libro","diagram":{"type":"${tipo}","title":"título","nodes":[{"id":"n1","label":"tema central","type":"root"},{"id":"n2","label":"idea relacionada","type":"concept"}],"edges":[{"source":"n1","target":"n2","label":"relación opcional"}]}}
-Incluye entre 4 y 9 nodos, un nodo raíz y conexiones suficientes para representar las relaciones. Usa únicamente información del libro y cita páginas dentro de content y labels cuando corresponda. No incluyas propiedades adicionales ni texto fuera del JSON.`;
+{"content":"explicación breve basada en el libro","diagram":{"type":"${tipo}","title":"título","nodes":[{"id":"n1","label":"tema central","type":"root","pagina":12},{"id":"n2","label":"idea relacionada","type":"concept","pagina":14}],"edges":[{"source":"n1","target":"n2"${tipo === 'concept_map' ? ',"label":"verbo de relación"' : ''}}]}}
+Incluye entre 4 y 9 nodos, un nodo raíz y conexiones suficientes para representar las relaciones. Usa únicamente información del libro. Cada "label" es un concepto de 1 a 5 palabras, sin numeración ni páginas; la página va en "pagina" (número) y en content puedes citarla como siempre.${tipo === 'concept_map' ? ' Cada conexión lleva un verbo o frase verbal corta.' : ' Las conexiones del mapa mental no llevan "label".'} No incluyas propiedades adicionales ni texto fuera del JSON.`;
   }
 
   /** Para la búsqueda en toda la biblioteca: varios libros, no uno solo. */

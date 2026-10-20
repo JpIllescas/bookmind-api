@@ -15,7 +15,7 @@ import { Conversation } from './entities/conversation.entity';
 import { LlamadaLlm } from './entities/llamada-llm.entity';
 import { GeminiProvider } from './providers/gemini.provider';
 import { LLM_PROVIDER, LlmProvider } from './providers/llm-provider.interface';
-import { MockProvider } from './providers/mock.provider';
+import { SinModeloProvider } from './providers/sin-modelo.provider';
 import { ContextoService } from './services/contexto.service';
 import { ConversacionesService } from './services/conversaciones.service';
 import { IntencionService } from './services/intencion.service';
@@ -41,8 +41,8 @@ const proveedorLlm: Provider = {
         );
 
       default:
-        logger.warn('Motor conversacional: mock (respuestas simuladas).');
-        return new MockProvider();
+        logger.warn('Sin modelo de lenguaje (LLM_PROVIDER=mock): todo sale del motor propio.');
+        return new SinModeloProvider();
     }
   },
 };

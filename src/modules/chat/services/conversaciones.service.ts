@@ -49,12 +49,14 @@ export class ConversacionesService {
       .addSelect('c.titulo', 'titulo')
       .addSelect('c.created_at', 'createdAt')
       .addSelect('c.updated_at', 'updatedAt')
+      // El dueño necesita saber cuáles están compartidas para poder revocarlas.
+      .addSelect('c.share_token', 'shareToken')
       .addSelect('COUNT(m.id)', 'mensajes')
       .where('c.document_id = :documentId', { documentId })
       .andWhere('c.user_id = :userId', { userId })
       .groupBy('c.id')
       .orderBy('c.updated_at', 'DESC')
-      .getRawMany<{ id: string; titulo: string; createdAt: Date; updatedAt: Date; mensajes: string }>();
+      .getRawMany<{ id: string; titulo: string; createdAt: Date; updatedAt: Date; shareToken: string | null; mensajes: string }>();
 
     // Un mensaje por conversación: alcanza para la vista previa sin traer todo el historial.
     const ultimos = await Promise.all(
@@ -74,7 +76,7 @@ export class ConversacionesService {
       ultimoMensaje: ultimos[i] ? this.recortar(ultimos[i].content, 90) : null,
       createdAt: fila.createdAt,
       updatedAt: fila.updatedAt,
-      shareToken: null,
+      shareToken: fila.shareToken ?? null,
     }));
   }
 

@@ -48,6 +48,16 @@ const SALTO_TOLERADO = 1;
 
 const LARGO_SUBTITULO = 48;
 
+/** Un primer capítulo pasada la mitad del libro es una lista numerada de un ejercicio, no la estructura. */
+const INICIO_MAXIMO_HEURISTICA = 0.5;
+
+/** Un "capítulo" que ocupa casi todo el libro sale de la página del índice, que nombra todas las unidades juntas. */
+const CAPITULO_MAXIMO_HEURISTICA = 0.75;
+
+/** Antes del primer capítulo, un tramo de al menos esto (o 3 páginas) se vuelve la sección "Inicio". */
+const FRACCION_PARA_INICIO = 0.1;
+const PAGINAS_MINIMAS_INICIO = 3;
+
 /** Encuentra los capítulos de un libro por sus encabezados, validando que la numeración avance. */
 export function detectarCapitulos(paginas: PaginaExtraida[]): CapituloDetectado[] {
   const ordenadas = [...paginas].sort((a, b) => a.pagina - b.pagina);
@@ -59,7 +69,7 @@ export function detectarCapitulos(paginas: PaginaExtraida[]): CapituloDetectado[
     .sort((a, b) => b.length - a.length);
 
   const marcas = candidatas[0] ?? [];
-  if (marcas.length < MINIMO_CAPITULOS) return [];
+  if (marcas.length < MINIMO_CAPITULOS || !esEstructura(marcas, ultimaPagina)) return [];
 
   return capitulosDesdeMarcas(marcas, ultimaPagina);
 }
@@ -75,13 +85,31 @@ export function capitulosDesdeMarcas(
 
   if (ordenadas.length < MINIMO_CAPITULOS) return [];
 
-  return ordenadas.map((marca, i) => ({
+  // Sin esto, las páginas previas al primer capítulo no entran al resumen ni a la ruta.
+  const previas = ordenadas[0].pagina - 1;
+  const conInicio =
+    previas >= Math.max(PAGINAS_MINIMAS_INICIO, Math.ceil(ultimaPagina * FRACCION_PARA_INICIO))
+      ? [{ titulo: 'Inicio', pagina: 1 }, ...ordenadas]
+      : ordenadas;
+
+  return conInicio.map((marca, i) => ({
     orden: i + 1,
     titulo: marca.titulo.trim().slice(0, 200),
     paginaInicio: marca.pagina,
     // Dos capítulos en la misma página comparten inicio y fin.
-    paginaFin: Math.max(marca.pagina, (ordenadas[i + 1]?.pagina ?? ultimaPagina + 1) - 1),
+    paginaFin: Math.max(marca.pagina, (conInicio[i + 1]?.pagina ?? ultimaPagina + 1) - 1),
   }));
+}
+
+/** La heurística acierta con encabezados repartidos por el libro, no con "I Parte / II Parte" de una hoja. */
+function esEstructura(marcas: Marca[], ultimaPagina: number): boolean {
+  const paginas = new Set(marcas.map((marca) => marca.pagina));
+  if (paginas.size < MINIMO_CAPITULOS) return false;
+  if (marcas[0].pagina > Math.max(1, ultimaPagina * INICIO_MAXIMO_HEURISTICA)) return false;
+
+  const inicios = [...marcas.map((marca) => marca.pagina), ultimaPagina + 1];
+  const masLargo = Math.max(...inicios.slice(1).map((inicio, i) => inicio - inicios[i]));
+  return masLargo <= ultimaPagina * CAPITULO_MAXIMO_HEURISTICA;
 }
 
 function marcasEtiquetadas(paginas: PaginaExtraida[]): Marca[] {

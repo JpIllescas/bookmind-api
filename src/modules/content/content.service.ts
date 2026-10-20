@@ -22,6 +22,7 @@ import { PromptService } from '../chat/services/prompt.service';
 import { MlService, PaginaEstudio, TipoEstudio } from '../ml/ml.service';
 import { UsersService } from '../users/users.service';
 import { RegistrarIntentoDto } from './dto/registrar-intento.dto';
+import { conPaginas, normalizarDiagrama } from './services/normalizar-diagrama';
 import { ResumenService, SeccionResumen } from './services/resumen.service';
 import {
   GeneratedContent,
@@ -86,6 +87,8 @@ interface Anclados<T> {
 
 /** Los tipos que Gemini sabe producir solo desde el texto, cuando el motor no responde. */
 const CON_RESPALDO_GEMINI: GeneratedContentType[] = ['summary', 'flashcards', 'quiz'];
+/** Lo que Gemini puede redactar mejor sobre lo que armó el motor; la línea de tiempo es literal y se queda así. */
+const MEJORABLES_CON_GEMINI: GeneratedContentType[] = [...CON_RESPALDO_GEMINI, 'glossary'];
 
 // Un resumen parafraseado ancla más bajo que una cita literal: se tolera hasta un tercio de afirmaciones dudosas.
 const MAXIMO_DUDOSAS_RESUMEN = 1 / 3;
@@ -134,7 +137,7 @@ export class ContentService {
           'Los mapas necesitan la ayuda de Gemini para redactarse. Actívala en el interruptor del Studio y vuelve a pedirlo.',
         );
       }
-      const content = await this.generarDiagrama(type, document, preferencias, idioma);
+      const content = await this.generarDiagrama(type, document, idioma);
       return this.contents.save(this.contents.create({ documentId, userId, type, content }));
     }
 
@@ -312,56 +315,43 @@ export class ContentService {
   private async generarDiagrama(
     type: 'mind_map' | 'concept_map',
     document: Document,
-    preferencias: PreferenciasEstudio | null,
     idioma: 'es' | 'en',
   ): Promise<Contenido> {
     const contexto = await this.contextoFiable(document, await this.capitulos.paginasDe(document.id));
-    const clase = type === 'mind_map' ? 'mind map' : 'concept map';
+    const mental = type === 'mind_map';
     const tituloPorDefecto = idioma === 'en'
-      ? clase
-      : type === 'mind_map' ? 'mapa mental' : 'mapa conceptual';
+      ? (mental ? 'Mind map' : 'Concept map')
+      : (mental ? 'Mapa mental' : 'Mapa conceptual');
     const idiomaRespuesta = idioma === 'en' ? 'Answer exclusively in English.' : 'Responde exclusivamente en español.';
+    // Sin las preferencias de estudio: con ellas Gemini devolvía un plan de sesiones en vez de las ideas del libro.
+    const estructura = mental
+      ? 'Es un MAPA MENTAL de las ideas del libro: un nodo "root" con el tema central del libro; de él salen de 3 a 6 ' +
+        'ideas principales, y de cada idea de 1 a 3 detalles. Todas las conexiones van del nodo general al específico ' +
+        'y forman un árbol (cada nodo tiene un solo padre). No pongas "label" en las conexiones.'
+      : 'Es un MAPA CONCEPTUAL: de 6 a 12 conceptos del libro, con un nodo "root" para el concepto más general. Cada ' +
+        'conexión lleva un "label" con un verbo o frase verbal de 1 a 4 palabras que se lea de corrido entre los dos ' +
+        'conceptos ("los seres vivos" → "se dividen en" → "animales"). Puede haber alguna relación entre ramas.';
     const respuesta = await this.llm.responder({
       systemPrompt:
-        `Genera un ${clase} sobre el libro usando únicamente el texto proporcionado. ${idiomaRespuesta} ` +
+        `${estructura} ${idiomaRespuesta} ` +
+        'Las etiquetas de los nodos son conceptos del libro de 1 a 5 palabras: sin oraciones, sin numeración, sin ' +
+        'tiempos ni minutos, sin actividades, sesiones ni ejercicios para el estudiante. Usa solo lo que dice el texto. ' +
         'Devuelve SOLO JSON válido, sin Markdown ni bloques de código, con esta forma exacta: ' +
-        `{"type":"${type}","title":"...","nodes":[{"id":"n1","label":"...","type":"root"}],"edges":[{"source":"n1","target":"n2","label":"..."}]}. ` +
-        'Usa entre 5 y 12 nodos, IDs únicos, un nodo root y conexiones dirigidas válidas. ' +
-        'Para un mapa mental parte de un tema central; para un mapa conceptual prioriza relaciones etiquetadas. ' +
-        'Las etiquetas deben ser breves. No inventes información. ' +
-        `Adapta el nivel a: ${this.prompts.instruccionPreferencias(preferencias)}\n` +
+        `{"type":"${type}","title":"...","nodes":[{"id":"n1","label":"...","type":"root"},{"id":"n2","label":"...","type":"concept"}],` +
+        `"edges":[{"source":"n1","target":"n2"${mental ? '' : ',"label":"..."'}}]}.\n` +
         'Texto del libro:\n' + contexto.contenido,
       historial: [],
-      mensaje: `Genera el ${clase} en JSON.`,
+      mensaje: `Genera el ${mental ? 'mapa mental' : 'mapa conceptual'} en JSON.`,
     });
 
-    const datos = this.comoObjetoJson(respuesta);
-    const ids = new Set<string>();
-    const nodes = (Array.isArray(datos.nodes) ? datos.nodes : [])
-      .map((node: any, index: number) => ({
-        id: String(node?.id ?? `n${index + 1}`),
-        label: String(node?.label ?? '').trim(),
-        type: String(node?.type ?? 'concept'),
-      }))
-      .filter((node: any) => node.label && !ids.has(node.id) && ids.add(node.id));
-    const edges = (Array.isArray(datos.edges) ? datos.edges : [])
-      .map((edge: any) => ({
-        source: String(edge?.source ?? ''),
-        target: String(edge?.target ?? ''),
-        label: edge?.label ? String(edge.label) : undefined,
-      }))
-      .filter((edge: any) => ids.has(edge.source) && ids.has(edge.target) && edge.source !== edge.target);
+    const mapa = normalizarDiagrama(this.comoObjetoJson(respuesta), type, tituloPorDefecto);
+    if (!mapa) throw this.malFormato();
 
-    if (nodes.length < 2 || edges.length === 0) throw this.malFormato();
-    if (!nodes.some((node: any) => node.type === 'root')) nodes[0].type = 'root';
+    // Cada nodo lleva la página que lo respalda, como el resto del material.
+    const citas = await this.anclaje.anclarItems(document.id, mapa.nodes.map((nodo) => nodo.label));
 
     return {
-      diagram: {
-        type,
-        title: String(datos.title ?? tituloPorDefecto),
-        nodes,
-        edges,
-      },
+      diagram: conPaginas(mapa, citas, CONSTANTS.GROUNDING_THRESHOLD),
       origen: 'gemini',
     } as Contenido;
   }
@@ -375,8 +365,8 @@ export class ContentService {
     document: Document,
     preferencias: PreferenciasEstudio | null,
   ): Promise<Contenido | null> {
-    // Con el mock no hay mejora que hacer; y glosario y línea de tiempo son fieles tal cual.
-    if (this.llm.nombre === 'mock' || !CON_RESPALDO_GEMINI.includes(type)) return null;
+    // Con el mock no hay mejora que hacer.
+    if (this.llm.nombre === 'mock' || !MEJORABLES_CON_GEMINI.includes(type)) return null;
 
     const criterios = this.prompts.instruccionPreferencias(preferencias);
 
@@ -421,6 +411,38 @@ export class ContentService {
           secciones: motor.secciones,
           origen: 'gemini',
         };
+      }
+
+      if ('terminos' in motor) {
+        // El motor encuentra el término y el pasaje donde aparece, pero ese pasaje no siempre lo explica.
+        const nuevas = this.comoJson(
+          await this.llm.responder({
+            systemPrompt:
+              'Para cada término del glosario, escribe una definición de una o dos oraciones que un ' +
+              'estudiante entienda, usando SOLO lo que dice su pasaje del libro. Si el pasaje no lo ' +
+              'explica, describe qué papel tiene el término en ese pasaje. No cambies los términos ni ' +
+              'su orden. Devuelve SOLO un JSON array con la misma cantidad de elementos, sin texto ' +
+              'alrededor ni ```: [{"definicion":"..."}]\n' +
+              `Adapta el registro a estos criterios: ${criterios}\n` +
+              `Glosario: ${JSON.stringify(motor.terminos.map(({ termino, definicion }) => ({ termino, pasaje: definicion })))}`,
+            historial: [],
+            mensaje: 'Redacta las definiciones.',
+          }),
+        );
+
+        if (nuevas.length !== motor.terminos.length) return null;
+
+        const terminos = await this.conservarAncladas(
+          document.id,
+          motor.terminos,
+          motor.terminos.map((termino, i) => ({
+            ...termino,
+            definicion: String(nuevas[i]?.definicion ?? '').trim() || termino.definicion,
+          })),
+          (termino) => `${termino.termino}: ${termino.definicion}`,
+        );
+
+        return terminos ? { terminos, origen: 'gemini' } : null;
       }
 
       if ('tarjetas' in motor) {

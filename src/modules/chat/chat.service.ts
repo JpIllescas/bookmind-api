@@ -87,7 +87,7 @@ export class ChatService {
     private readonly usuarios: UsersService,
     private readonly conversaciones: ConversacionesService,
     private readonly extractiva: RespuestaExtractivaService,
-  ) {}
+  ) { }
 
   /** Respuesta completa de una vez; el camino sin streaming sigue existiendo para la API. */
   async responder(
@@ -112,10 +112,10 @@ export class ChatService {
     const respuesta = turno
       ? await this.llm.responder(this.peticionDe(turno, mensaje))
       : await this.extractiva.responder(conversacion.documentId, mensaje, {
-          idioma,
-          tutor: modo === 'tutor',
-          pidioDiagrama: diagrama !== null,
-        });
+        idioma,
+        tutor: modo === 'tutor',
+        pidioDiagrama: diagrama !== null,
+      });
     const guardada = await this.cerrarTurno(userId, conversacion, mensaje, respuesta);
 
     return {
@@ -157,7 +157,6 @@ export class ChatService {
     }
 
     const diagrama = this.intencion.detectarDiagrama(mensaje);
-    // Sin la ayuda de Gemini no se arma el prompt: la respuesta sale de los pasajes recuperados.
     const turno = (await this.usuarios.usaGemini(userId))
       ? await this.prepararTurno(userId, conversacion, mensaje, diagrama, idioma, modo)
       : null;
