@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  Body,
   Controller,
   Delete,
   Get,
@@ -8,6 +9,7 @@ import {
   HttpCode,
   Param,
   ParseUUIDPipe,
+  Patch,
   Post,
   Res,
   StreamableFile,
@@ -25,6 +27,7 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 import type { AuthUser } from '../../common/interfaces/auth-user.interface';
 import { TipoDocumento } from '../../common/enums/tipo-documento.enum';
 import { DocumentsService } from './documents.service';
+import { RenombrarDocumentoDto } from './dto/renombrar-documento.dto';
 
 @Controller('documents')
 // El aislamiento por usuario lo cierra el servicio, filtrando por userId.
@@ -93,6 +96,15 @@ export class DocumentsController {
     @Param('id', ParseUUIDPipe) id: string,
   ) {
     return this.documentos.eliminar(usuario.id, id);
+  }
+
+  @Patch(':id')
+  renombrar(
+    @CurrentUser() usuario: AuthUser,
+    @Param('id', ParseUUIDPipe) id: string,
+    @Body() cambios: RenombrarDocumentoDto,
+  ) {
+    return this.documentos.renombrar(usuario.id, id, cambios);
   }
 
   @Get(':id/chapters')

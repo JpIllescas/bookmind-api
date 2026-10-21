@@ -69,6 +69,21 @@ export class ResumenService {
       secciones.push(...lote.filter((s): s is SeccionResumen => s !== null));
     }
 
+    // Dos tramos seguidos comparten la página del borde: la misma oración saldría en los dos.
+    const vistas = new Set<string>();
+    const sinRepetir = secciones
+      .map((seccion) => ({
+        ...seccion,
+        puntos: seccion.puntos.filter((punto) => {
+          const clave = punto.texto.toLowerCase().replace(/\s+/g, ' ');
+          if (vistas.has(clave)) return false;
+          vistas.add(clave);
+          return true;
+        }),
+      }))
+      .filter((seccion) => seccion.puntos.length > 0);
+    secciones.splice(0, secciones.length, ...sinRepetir);
+
     if (secciones.length === 0) return null;
 
     return {

@@ -128,6 +128,39 @@ describe('DocumentsService', () => {
     });
   });
 
+  describe('renombrar', () => {
+    const guardado = { id: 'doc-1', userId: 'usuario-a', title: 'DBS 01 09', author: null } as Document;
+
+    it('guarda el título y el autor del estudiante, solo en su libro', async () => {
+      documentos.findOne.mockResolvedValue(guardado);
+
+      const resumen = await servicio.renombrar('usuario-a', 'doc-1', { titulo: ' Dragon Ball Super 1 ', autor: 'Akira Toriyama' });
+
+      expect(documentos.update).toHaveBeenCalledWith(
+        { id: 'doc-1', userId: 'usuario-a' },
+        { title: 'Dragon Ball Super 1', author: 'Akira Toriyama' },
+      );
+      expect(resumen).toEqual(expect.objectContaining({ title: 'Dragon Ball Super 1', author: 'Akira Toriyama' }));
+    });
+
+    it('un autor vacío lo quita y uno ausente lo conserva', async () => {
+      documentos.findOne.mockResolvedValue({ ...guardado, author: 'Alguien' } as Document);
+
+      await servicio.renombrar('usuario-a', 'doc-1', { titulo: 'A', autor: '' });
+      await servicio.renombrar('usuario-a', 'doc-1', { titulo: 'B' });
+
+      expect(documentos.update).toHaveBeenNthCalledWith(1, expect.anything(), { title: 'A', author: null });
+      expect(documentos.update).toHaveBeenNthCalledWith(2, expect.anything(), { title: 'B', author: 'Alguien' });
+    });
+
+    it('no renombra el libro de otra cuenta', async () => {
+      documentos.findOne.mockResolvedValue(null);
+
+      await expect(servicio.renombrar('usuario-a', 'doc-ajeno', { titulo: 'X' })).rejects.toBeInstanceOf(NotFoundException);
+      expect(documentos.update).not.toHaveBeenCalled();
+    });
+  });
+
   describe('encolar', () => {
     it('responde en cuanto guarda el archivo, sin esperar la extracción', async () => {
       const documento = await servicio.encolar('usuario-a', archivoFalso);
@@ -300,6 +333,44 @@ describe('DocumentsService', () => {
       );
 
       await esperarProcesamiento();
+    });
+
+    it('usa el título y el autor del archivo, sin pisar un renombrado hecho mientras se procesaba', async () => {
+      extraccion.extraer.mockResolvedValue({
+        paginas: [{ pagina: 1, texto: TEXTO_NATIVO }],
+        textoCompleto: TEXTO_NATIVO,
+        totalPaginas: 47,
+        capaTexto: 'ok',
+        capitulos: [],
+        metadatos: { titulo: 'El Principito', autor: 'Antoine De Saint-Exupéry' },
+      });
+
+      await servicio.encolar('usuario-a', { ...archivoFalso, originalname: 'el principito (1).pdf' } as Express.Multer.File);
+      await esperarProcesamiento();
+
+      expect(documentos.update).toHaveBeenCalledWith(
+        { id: 'doc-1', title: 'El principito' },
+        { title: 'El Principito', author: 'Antoine De Saint-Exupéry' },
+      );
+    });
+
+    it('con metadatos de relleno se queda con el nombre del archivo', async () => {
+      extraccion.extraer.mockResolvedValue({
+        paginas: [{ pagina: 1, texto: TEXTO_NATIVO }],
+        textoCompleto: TEXTO_NATIVO,
+        totalPaginas: 10,
+        capaTexto: 'ok',
+        capitulos: [],
+        metadatos: { titulo: 'Microsoft Word - tarea.docx', autor: 'Usuario' },
+      });
+
+      await servicio.encolar('usuario-a', archivoFalso);
+      await esperarProcesamiento();
+
+      expect(documentos.update).not.toHaveBeenCalledWith(
+        expect.objectContaining({ title: expect.any(String) }),
+        expect.anything(),
+      );
     });
 
     it('rechaza formatos que no sean PDF ni EPUB y borra lo subido', async () => {

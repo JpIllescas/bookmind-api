@@ -4,6 +4,7 @@ import StreamZip from 'node-stream-zip';
 
 import { TipoDocumento } from '../../../common/enums/tipo-documento.enum';
 import { CapituloDetectado, capitulosDesdeMarcas } from './deteccion-capitulos';
+import type { MetadatosLibro } from './titulo-del-libro';
 
 /** Una página (PDF) o una sección del spine (EPUB). */
 export interface PaginaExtraida {
@@ -23,11 +24,14 @@ export interface ResultadoExtraccion {
   capaTexto: CapaTexto;
   /** Del índice del archivo; vacío cuando el editor no lo incluyó. */
   capitulos: CapituloDetectado[];
+  /** Sin validar: la mayoría de los PDF los traen vacíos o con relleno del programa. */
+  metadatos?: MetadatosLibro;
 }
 
 interface Extraido {
   paginas: PaginaExtraida[];
   capitulos: CapituloDetectado[];
+  metadatos: MetadatosLibro;
 }
 
 /** Título con página, tal como lo declara el índice del archivo. */
@@ -42,6 +46,7 @@ interface DocumentoPdf {
   getOutline(): Promise<{ title: string; dest: unknown }[] | null>;
   getDestination(nombre: string): Promise<unknown[] | null>;
   getPageIndex(referencia: unknown): Promise<number>;
+  getMetadata(): Promise<{ info: unknown; metadata: { get(nombre: string): unknown } | null }>;
 }
 
 /** Debajo de esto casi seguro es un escaneo, no un libro con texto. */
@@ -59,12 +64,12 @@ export class ExtraccionService {
     buffer: Buffer,
     tipo: TipoDocumento,
   ): Promise<ResultadoExtraccion> {
-    const { paginas, capitulos } =
+    const { paginas, capitulos, metadatos } =
       tipo === TipoDocumento.PDF
         ? await this.extraerDePdf(buffer)
         : await this.extraerDeEpub(buffer);
 
-    return { ...this.consolidar(paginas), paginas, totalPaginas: paginas.length, capitulos };
+    return { ...this.consolidar(paginas), paginas, totalPaginas: paginas.length, capitulos, metadatos };
   }
 
   /** Texto completo y capa de texto de unas páginas; se recalcula tras sumarles el OCR. */
@@ -110,11 +115,27 @@ export class ExtraccionService {
       return {
         paginas,
         capitulos: await this.capitulosDelOutline(documento as unknown as DocumentoPdf),
+        metadatos: await this.metadatosDelPdf(documento as unknown as DocumentoPdf),
       };
     } finally {
       // En pdf.js v6 `destroy()` está en la tarea: si no, el worker queda vivo.
       await tarea.destroy();
     }
+  }
+
+  /** Del diccionario Info y, si falta, del XMP; un error aquí no impide leer el libro. */
+  private async metadatosDelPdf(documento: DocumentoPdf): Promise<MetadatosLibro> {
+    const leidos = await documento.getMetadata().catch(() => null);
+    const info = (leidos?.info ?? {}) as Record<string, unknown>;
+    const xmp = (nombre: string) =>
+      this.textoDe(this.comoArreglo(leidos?.metadata?.get(nombre))[0]) || null;
+    const conTexto = (valor: unknown) =>
+      typeof valor === 'string' && valor.trim() ? valor : null;
+
+    return {
+      titulo: conTexto(info.Title) ?? xmp('dc:title'),
+      autor: conTexto(info.Author) ?? xmp('dc:creator'),
+    };
   }
 
   /** El índice del PDF, cuando el editor lo incluyó: títulos reales y páginas exactas. */
@@ -226,11 +247,20 @@ export class ExtraccionService {
         paginas.length,
       );
 
-      return { paginas, capitulos };
+      return { paginas, capitulos, metadatos: this.metadatosDelOpf(paquete) };
     } finally {
       await zip.close().catch(() => undefined);
       await limpiar();
     }
+  }
+
+  /** dc:title y dc:creator pueden venir repetidos o con atributos ({ '#text', '@_id' }): manda el primero. */
+  private metadatosDelOpf(paquete: any): MetadatosLibro {
+    const metadatos = paquete?.metadata ?? {};
+    const primero = (clave: string) =>
+      this.textoDe(this.comoArreglo(metadatos[clave])[0]) || null;
+
+    return { titulo: primero('dc:title'), autor: primero('dc:creator') };
   }
 
   /** La tabla de contenido del EPUB: nav.xhtml (EPUB 3) o toc.ncx (EPUB 2). */

@@ -62,12 +62,13 @@ export const ACCIONES_POR_MATERIA: Record<Materia, string[]> = {
 
 /** Colores de portada por materia. */
 export const TINTE_POR_MATERIA: Record<Materia, string> = {
-  [Materia.Matematicas]: '#B4552E',
-  [Materia.CienciasNaturales]: '#3F5E57',
-  [Materia.ComunicacionLenguaje]: '#5A4B7A',
-  [Materia.CienciasSociales]: '#8A6D3B',
-  [Materia.Ingles]: '#4A6070',
-  [Materia.Otro]: '#B4552E',
+  // Las mismas bases que PALETA_POR_MATERIA del frontend (shared/portada/paleta-portada.ts).
+  [Materia.Matematicas]: '#2F5F8F',
+  [Materia.CienciasNaturales]: '#2F6B4F',
+  [Materia.ComunicacionLenguaje]: '#B4552E',
+  [Materia.CienciasSociales]: '#B8860B',
+  [Materia.Ingles]: '#6B3F8F',
+  [Materia.Otro]: '#3B3A5C',
 };
 
 /** Etiqueta de biblioteca: "Ciencias Naturales · Primaria alta". */

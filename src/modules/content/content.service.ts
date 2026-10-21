@@ -58,6 +58,8 @@ export interface Termino {
   pagina: number;
   /** True si el libro lo define ("X significa…"); si no, es la oración más central. */
   esDefinicion: boolean;
+  /** Otras apariciones del término: solo sirven para que Gemini lo defina, no se guardan. */
+  contextos?: PuntoResumen[];
 }
 
 export interface Evento {
@@ -100,6 +102,15 @@ const GENERADOR_POR_TIPO: Partial<Record<GeneratedContentType, TipoEstudio>> = {
   glossary: 'concepts',
   timeline: 'timeline',
 };
+
+/** Lo que Gemini escribe como "En este pasaje…" describe la cita, no el término: vale más la del motor. */
+const SIN_DEFINIR = /^(en (este|el) (pasaje|texto|fragmento)|el (texto|pasaje|fragmento)|seg[uú]n el (libro|texto|pasaje))\b/i;
+
+/** La definición redactada, o null si llegó vacía o no define nada. */
+export function definicionRedactada(valor: unknown): string | null {
+  const definicion = String(valor ?? '').trim();
+  return definicion && !SIN_DEFINIR.test(definicion) ? definicion : null;
+}
 
 @Injectable()
 export class ContentService {
@@ -177,6 +188,9 @@ export class ContentService {
 
     // El Studio avisa de que el material no cubre las páginas con OCR poco fiable.
     if (paginasExcluidas > 0) content = { ...content, paginasExcluidas };
+    if ('terminos' in content) {
+      content = { ...content, terminos: content.terminos.map(({ contextos: _contextos, ...termino }) => termino) };
+    }
 
     return this.contents.save(
       this.contents.create({ documentId, userId, type, content }),
@@ -297,6 +311,9 @@ export class ContentService {
             definicion: String(t.definicion),
             pagina: Number(t.pagina),
             esDefinicion: Boolean(t.esDefinicion),
+            contextos: Array.isArray(t.contextos)
+              ? t.contextos.map((c: any) => ({ texto: String(c.texto), pagina: Number(c.pagina) }))
+              : [],
           })),
         };
       case 'timeline':
@@ -414,19 +431,27 @@ export class ContentService {
       }
 
       if ('terminos' in motor) {
-        // El motor encuentra el término y el pasaje donde aparece, pero ese pasaje no siempre lo explica.
+        // El motor encuentra el término y dónde aparece; varias apariciones juntas dicen qué es, una sola casi nunca.
         const nuevas = this.comoJson(
           await this.llm.responder({
             systemPrompt:
-              'Para cada término del glosario, escribe una definición de una o dos oraciones que un ' +
-              'estudiante entienda, usando SOLO lo que dice su pasaje del libro. Si el pasaje no lo ' +
-              'explica, describe qué papel tiene el término en ese pasaje. No cambies los términos ni ' +
-              'su orden. Devuelve SOLO un JSON array con la misma cantidad de elementos, sin texto ' +
-              'alrededor ni ```: [{"definicion":"..."}]\n' +
+              'Escribe la entrada de glosario de cada término de este libro: una o dos oraciones que digan ' +
+              'qué o quién es el término en el libro, como en un diccionario ("Personaje que…", "Planeta ' +
+              'donde…", "Proceso por el cual…"), que un estudiante entienda. Usa SOLO lo que dicen sus ' +
+              'pasajes; puedes combinar lo que dicen varios. No empieces con "En este pasaje", "El texto" ' +
+              'ni "Según el libro", y no copies una frase que no lo explique. Si los pasajes no alcanzan ' +
+              'para decir qué es, devuelve "definicion": "". No cambies los términos ni su orden. Devuelve ' +
+              'SOLO un JSON array con la misma cantidad de elementos, sin texto alrededor ni ```: ' +
+              '[{"definicion":"..."}]\n' +
               `Adapta el registro a estos criterios: ${criterios}\n` +
-              `Glosario: ${JSON.stringify(motor.terminos.map(({ termino, definicion }) => ({ termino, pasaje: definicion })))}`,
+              `Glosario: ${JSON.stringify(
+                motor.terminos.map(({ termino, definicion, pagina, contextos }) => ({
+                  termino,
+                  pasajes: [{ texto: definicion, pagina }, ...(contextos ?? []).filter((c) => c.texto !== definicion)],
+                })),
+              )}`,
             historial: [],
-            mensaje: 'Redacta las definiciones.',
+            mensaje: 'Redacta las entradas del glosario.',
           }),
         );
 
@@ -437,7 +462,7 @@ export class ContentService {
           motor.terminos,
           motor.terminos.map((termino, i) => ({
             ...termino,
-            definicion: String(nuevas[i]?.definicion ?? '').trim() || termino.definicion,
+            definicion: definicionRedactada(nuevas[i]?.definicion) ?? termino.definicion,
           })),
           (termino) => `${termino.termino}: ${termino.definicion}`,
         );
@@ -480,10 +505,13 @@ export class ContentService {
         const nuevas = this.comoJson(
           await this.llm.responder({
             systemPrompt:
-              'Reescribe el enunciado de cada pregunta de este quiz para que sea una pregunta ' +
-              'natural cuya respuesta correcta siga siendo la misma opción. No cambies las ' +
-              'opciones ni el orden. Devuelve SOLO un JSON array con la misma cantidad de ' +
-              'elementos, sin texto alrededor ni ```: [{"pregunta":"..."}]\n' +
+              'Reescribe el enunciado de cada pregunta de este quiz para que se lea natural, sin cambiar ' +
+              'las opciones, su orden ni cuál es la correcta. Reglas: (1) conserva la frase del libro que ' +
+              'trae la pregunta: el estudiante tiene que poder responder con ella, y puede seguir siendo una ' +
+              'frase para completar; (2) no agregues pistas que solo cumpla la correcta, como "¿qué ' +
+              'personaje…?" si las demás opciones no son personajes; (3) si con tu enunciado otra opción ' +
+              'también podría ser correcta, marca "ambigua": true. Devuelve SOLO un JSON array con la ' +
+              'misma cantidad de elementos, sin texto alrededor ni ```: [{"pregunta":"...","ambigua":false}]\n' +
               `Adapta el registro a estos criterios: ${criterios}\n` +
               `Quiz: ${JSON.stringify(motor.preguntas.map(({ pregunta, opciones, correcta }) => ({ pregunta, opciones, correcta })))}`,
             historial: [],
@@ -498,7 +526,8 @@ export class ContentService {
           motor.preguntas,
           motor.preguntas.map((pregunta, i) => ({
             ...pregunta,
-            pregunta: String(nuevas[i]?.pregunta ?? '').trim() || pregunta.pregunta,
+            // Si Gemini ve que su enunciado admite dos respuestas, vale más la frase literal del motor.
+            pregunta: (nuevas[i]?.ambigua !== true && String(nuevas[i]?.pregunta ?? '').trim()) || pregunta.pregunta,
           })),
           (pregunta) => `${pregunta.pregunta} ${pregunta.opciones[pregunta.correcta]}`,
         );

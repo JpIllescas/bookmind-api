@@ -65,7 +65,12 @@ export class AllExceptionsFilter implements ExceptionFilter {
         ? (respuesta as { message?: unknown }).message
         : null;
 
-    return typeof mensaje === 'string' && /[.!?]$/.test(mensaje.trim()) ? mensaje : null;
+    // El ValidationPipe manda una lista: vale el primero escrito en el DTO; los de class-validator no llevan punto.
+    const candidatos = Array.isArray(mensaje) ? mensaje : [mensaje];
+    const elegido = candidatos.find(
+      (m): m is string => typeof m === 'string' && /[.!?]$/.test(m.trim()),
+    );
+    return elegido ?? null;
   }
 
   private mensajePublico(status: number): string {

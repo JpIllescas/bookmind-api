@@ -56,6 +56,25 @@ export class BusquedaLexicaService {
     );
   }
 
+  /**
+   * En cuántos fragmentos del libro aparece cada palabra, con la raíz del español: dice qué tan rara es.
+   * Una palabra vacía para Postgres ("para", "esta") cuenta 0.
+   */
+  async frecuencias(documentId: string, palabras: string[]): Promise<{ fragmentos: number; porPalabra: number[] }> {
+    const consulta = this.fragmentos
+      .createQueryBuilder('fragmento')
+      .select('count(*)::int', 'fragmentos')
+      .where('fragmento.document_id = :documentId', { documentId });
+    palabras.forEach((palabra, i) =>
+      consulta
+        .addSelect(`count(*) FILTER (WHERE fragmento.tsv @@ plainto_tsquery('spanish', :palabra${i}))::int`, `p${i}`)
+        .setParameter(`palabra${i}`, palabra),
+    );
+
+    const fila = (await consulta.getRawOne<Record<string, number>>()) ?? {};
+    return { fragmentos: Number(fila.fragmentos ?? 0), porPalabra: palabras.map((_, i) => Number(fila[`p${i}`] ?? 0)) };
+  }
+
   // AND exige todas las palabras: una pregunta larga casi nunca las tiene juntas en un fragmento.
   private async conSegundoIntento(
     pregunta: string,

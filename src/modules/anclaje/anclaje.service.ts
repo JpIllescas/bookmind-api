@@ -206,6 +206,11 @@ export class AnclajeService {
     );
   }
 
+  /** Qué tan rara es cada palabra en el libro: la respuesta extractiva pesa más lo que el libro menos repite. */
+  frecuencias(documentId: string, palabras: string[]) {
+    return this.lexica.frecuencias(documentId, palabras);
+  }
+
   /** Busca en todos los libros del estudiante, no solo en el que tiene abierto. */
   async recuperarEnBiblioteca(userId: string, pregunta: string, cuantos = 10) {
     const [[vector], fragmentos, lexicos] = await Promise.all([

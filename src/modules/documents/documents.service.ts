@@ -34,6 +34,12 @@ import {
 } from './services/extraccion.service';
 import { MENSAJES_OCR, OcrFallidoError, OcrService } from './services/ocr.service';
 import {
+  autorDeMetadatos,
+  tituloDeMetadatos,
+  tituloDesdeArchivo,
+  type MetadatosLibro,
+} from './services/titulo-del-libro';
+import {
   CARACTERES_PARA_CLASIFICAR,
   ReclasificacionService,
   camposDeClasificacion,
@@ -148,6 +154,7 @@ export class DocumentsService implements OnApplicationBootstrap {
 
       const extraido = await this.extraccion.extraer(buffer, documento.type);
       const { totalPaginas, capitulos } = extraido;
+      await this.aplicarMetadatos(documento, extraido.metadatos);
       let { paginas, textoCompleto, capaTexto } = extraido;
 
       const ocr = await this.digitalizarPaginasImagen(documento, buffer, paginas, capaTexto);
@@ -216,6 +223,33 @@ export class DocumentsService implements OnApplicationBootstrap {
         progresoOcr: null,
       });
     }
+  }
+
+  /** El título y el autor del archivo le ganan al nombre, salvo que el estudiante ya lo haya renombrado. */
+  private async aplicarMetadatos(documento: Document, metadatos?: MetadatosLibro): Promise<void> {
+    const titulo = tituloDeMetadatos(metadatos?.titulo);
+    const autor = autorDeMetadatos(metadatos?.autor);
+    if (!titulo && !autor) return;
+
+    // Con el título de la subida en el WHERE: si cambió mientras se procesaba, no se pisa.
+    await this.documentos.update(
+      { id: documento.id, title: documento.title },
+      { ...(titulo ? { title: titulo } : {}), ...(autor && !documento.author ? { author: autor } : {}) },
+    );
+  }
+
+  /** El nombre lo elige el estudiante; el autor vacío vuelve a "sin autor". */
+  async renombrar(
+    userId: string,
+    id: string,
+    cambios: { titulo: string; autor?: string | null },
+  ) {
+    const documento = await this.obtener(userId, id);
+    const autor = cambios.autor === undefined ? documento.author : cambios.autor?.trim() || null;
+
+    await this.documentos.update({ id, userId }, { title: cambios.titulo.trim(), author: autor });
+
+    return this.comoResumen({ ...documento, title: cambios.titulo.trim(), author: autor });
   }
 
   /**
@@ -453,9 +487,7 @@ export class DocumentsService implements OnApplicationBootstrap {
 
   private titulaDesdeNombre(nombreArchivo: string): string {
     const nombre = this.repararCodificacion(nombreArchivo);
-    const sinExtension = nombre.replace(/\.(pdf|epub)$/i, '');
-    const limpio = sinExtension.replace(/[_-]+/g, ' ').replace(/\s+/g, ' ').trim();
-    return limpio.length > 0 ? limpio.slice(0, 200) : 'Documento sin título';
+    return tituloDesdeArchivo(nombre.replace(/\.(pdf|epub)$/i, ''));
   }
 
   private repararCodificacion(nombre: string): string {
