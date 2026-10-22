@@ -7,11 +7,13 @@
   "license": "UNLICENSED",
   "scripts": {
     "build": "nest build",
+    "build:render": "node --max-old-space-size=384 ./node_modules/@nestjs/cli/bin/nest.js build",
     "format": "prettier --write \"src/**/*.ts\"",
     "start": "npm run migration:run && nest start",
     "start:dev": "npm run migration:run && nest start --watch",
     "start:debug": "nest start --debug --watch",
     "start:prod": "npm run migration:run:prod && node dist/main",
+    "start:render": "npm run migration:run:prod && node dist/main",
     "lint": "eslint \"{src,apps,libs}/**/*.ts\" --fix",
     "test": "jest",
     "test:watch": "jest --watch",
