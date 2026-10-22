@@ -31,7 +31,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(carga: JwtPayload): Promise<AuthUser> {
     const usuario = await this.usuarios.findOne({
       where: { id: carga.sub },
-      select: { id: true, email: true, name: true, preferences: true },
+      select: { id: true, email: true, name: true, preferences: true, onboardingCompletado: true },
     });
 
     if (!usuario) {
@@ -43,6 +43,7 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
       email: usuario.email,
       name: usuario.name,
       preferenceCompleted: usuario.preferences != null,
+      onboardingCompleted: usuario.onboardingCompletado ?? false,
     };
   }
 }

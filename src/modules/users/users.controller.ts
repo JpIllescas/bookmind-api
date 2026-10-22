@@ -31,4 +31,9 @@ export class UsersController {
   guardarAyudaGemini(@CurrentUser() usuario: AuthUser, @Body() dto: GuardarAyudaGeminiDto) {
     return this.users.guardarAyudaGemini(usuario.id, dto.activada);
   }
+
+  @Put('onboarding')
+  completarOnboarding(@CurrentUser() usuario: AuthUser) {
+    return this.users.completarOnboarding(usuario.id);
+  }
 }

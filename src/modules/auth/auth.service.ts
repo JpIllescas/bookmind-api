@@ -19,7 +19,13 @@ const RONDAS_BCRYPT = 12;
 
 export interface RespuestaAuth {
   token: string;
-  user: { id: string; email: string; name: string; preferenceCompleted: boolean };
+  user: {
+    id: string;
+    email: string;
+    name: string;
+    preferenceCompleted: boolean;
+    onboardingCompleted: boolean;
+  };
 }
 
 @Injectable()
@@ -98,7 +104,14 @@ export class AuthService {
     // `passwordHash` tiene `select: false`: hay que pedirlo explícitamente.
     const usuario = await this.usuarios.findOne({
       where: { email },
-      select: { id: true, email: true, name: true, passwordHash: true, preferences: true },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        passwordHash: true,
+        preferences: true,
+        onboardingCompletado: true,
+      },
     });
 
     // Con un señuelo, un correo registrado y uno que no tardan lo mismo.
@@ -169,6 +182,7 @@ export class AuthService {
         email: usuario.email,
         name: usuario.name,
         preferenceCompleted: usuario.preferences != null,
+        onboardingCompleted: usuario.onboardingCompletado ?? false,
       },
     };
   }

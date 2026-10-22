@@ -43,6 +43,12 @@ export class UsersService {
     return this.ayudaGemini(userId);
   }
 
+  async completarOnboarding(userId: string): Promise<{ completado: true }> {
+    const resultado = await this.usuarios.update({ id: userId }, { onboardingCompletado: true });
+    if (!resultado.affected) throw new NotFoundException('Usuario no encontrado.');
+    return { completado: true };
+  }
+
   /** Gemini solo entra si el servidor lo tiene y el estudiante no lo apagó. */
   async usaGemini(userId: string): Promise<boolean> {
     const { activada, disponible } = await this.ayudaGemini(userId);

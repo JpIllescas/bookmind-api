@@ -4,6 +4,7 @@ export interface AuthUser {
   email: string;
   name: string;
   preferenceCompleted: boolean;
+  onboardingCompleted: boolean;
 }
 
 /** Contenido del JWT que firma el backend. */

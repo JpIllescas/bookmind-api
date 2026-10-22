@@ -138,7 +138,7 @@ describe('AuthService', () => {
 
       expect(respuesta.token).toBe('token-de-prueba');
       expect(respuesta.user).toEqual({
-        id: 'id-1', email: 'a@b.com', name: 'Ana', preferenceCompleted: false,
+        id: 'id-1', email: 'a@b.com', name: 'Ana', preferenceCompleted: false, onboardingCompleted: false,
       });
       // La respuesta no debe filtrar el hash.
       expect(JSON.stringify(respuesta)).not.toContain('$2');

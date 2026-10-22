@@ -34,6 +34,9 @@ export class User {
   @Column({ name: 'usar_gemini', type: 'boolean', default: true })
   usarGemini: boolean;
 
+  @Column({ name: 'onboarding_completado', type: 'boolean', default: false })
+  onboardingCompletado: boolean;
+
   @CreateDateColumn({ name: 'created_at' })
   createdAt: Date;
 
