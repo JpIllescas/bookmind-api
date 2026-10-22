@@ -85,6 +85,7 @@ export const CONSTANTS = {
   DB_PASSWORD: configService.getOrThrow<string>('DB_PASSWORD'),
   DB_NAME: configService.getOrThrow<string>('DB_NAME'),
   DB_SCHEMA: configService.getOrThrow<string>('DB_SCHEMA'),
+  DB_SSL: (configService.get<string>('DB_SSL') ?? 'false') === 'true',
 
   // Motor conversacional (pieza 1)
   LLM_PROVIDER: validarProveedorLlm(configService.get<string>('LLM_PROVIDER')),

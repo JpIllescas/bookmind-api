@@ -11,8 +11,8 @@ export const dataSourceOptions: DataSourceOptions = {
   password: CONSTANTS.DB_PASSWORD,
   database: CONSTANTS.DB_NAME,
   schema: CONSTANTS.DB_SCHEMA,
-  extra: { options: `-c search_path=${CONSTANTS.DB_SCHEMA}` },
-  ssl: CONSTANTS.ENV === 'prod' ? { rejectUnauthorized: false } : false,
+  extra: { options: `-c search_path=${CONSTANTS.DB_SCHEMA},public` },
+  ssl: CONSTANTS.DB_SSL ? { rejectUnauthorized: false } : false,
   // Sin esto, pg devuelve los bigint como string.
   parseInt8: true,
   entities: [join(__dirname, '..', '..', '**', '*.entity.{ts,js}')],
