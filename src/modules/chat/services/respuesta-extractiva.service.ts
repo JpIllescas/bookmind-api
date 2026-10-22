@@ -327,7 +327,12 @@ export class RespuestaExtractivaService {
   async responder(
     documentId: string,
     pregunta: string,
-    opciones: { idioma?: Idioma; tutor?: boolean; pidioDiagrama?: boolean } = {},
+    opciones: {
+      idioma?: Idioma;
+      tutor?: boolean;
+      pidioDiagrama?: boolean;
+      detalle?: 'brief' | 'normal' | 'deep';
+    } = {},
   ): Promise<string> {
     const textos = TEXTOS[opciones.idioma ?? 'es'];
     const utiles = pasajesUtiles(await this.anclaje.recuperar(documentId, pregunta, PASAJES_CANDIDATOS));
@@ -342,7 +347,17 @@ export class RespuestaExtractivaService {
       return `${textos.tutor}\n\n«${pasaje.cita}» (${PAGINA} ${pasaje.pagina})`;
     }
 
-    const vinetas = mejoresCitas(utiles, pregunta, PASAJES_EN_RESPUESTA, ORACIONES_POR_PASAJE, pesos).map(
+    const cantidadPasajes = opciones.detalle === 'brief'
+      ? 1
+      : opciones.detalle === 'deep'
+        ? 5
+        : PASAJES_EN_RESPUESTA;
+    const oracionesPorPasaje = opciones.detalle === 'brief'
+      ? 1
+      : opciones.detalle === 'deep'
+        ? 3
+        : ORACIONES_POR_PASAJE;
+    const vinetas = mejoresCitas(utiles, pregunta, cantidadPasajes, oracionesPorPasaje, pesos).map(
       ({ pagina, cita }) => `- «${cita}» (${PAGINA} ${pagina})`,
     );
     if (vinetas.length === 0) return textos.nada;

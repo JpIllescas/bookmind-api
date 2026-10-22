@@ -22,4 +22,8 @@ export class EnviarMensajeDto {
   @IsOptional()
   @IsIn(['tutor'])
   modo?: 'tutor';
+
+  @IsOptional()
+  @IsIn(['brief', 'normal', 'deep'])
+  detalle?: 'brief' | 'normal' | 'deep';
 }

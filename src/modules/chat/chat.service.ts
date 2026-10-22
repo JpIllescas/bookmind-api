@@ -97,6 +97,7 @@ export class ChatService {
     conversationId?: string,
     idioma: 'es' | 'en' = 'es',
     modo: 'tutor' | undefined = undefined,
+    detalle: 'brief' | 'normal' | 'deep' = 'normal',
   ): Promise<RespuestaChat> {
     const conversacion = await this.resolverConversacion(userId, documentId, conversationId);
     const materiales = this.intencion.detectar(mensaje);
@@ -107,7 +108,7 @@ export class ChatService {
 
     const diagrama = this.intencion.detectarDiagrama(mensaje);
     const turno = (await this.usuarios.usaGemini(userId))
-      ? await this.prepararTurno(userId, conversacion, mensaje, diagrama, idioma, modo)
+      ? await this.prepararTurno(userId, conversacion, mensaje, diagrama, idioma, modo, detalle)
       : null;
     const respuesta = turno
       ? await this.llm.responder(this.peticionDe(turno, mensaje))
@@ -115,6 +116,7 @@ export class ChatService {
         idioma,
         tutor: modo === 'tutor',
         pidioDiagrama: diagrama !== null,
+        detalle,
       });
     const guardada = await this.cerrarTurno(userId, conversacion, mensaje, respuesta);
 
@@ -143,6 +145,7 @@ export class ChatService {
     conversationId?: string,
     idioma: 'es' | 'en' = 'es',
     modo: 'tutor' | undefined = undefined,
+    detalle: 'brief' | 'normal' | 'deep' = 'normal',
   ): Promise<void> {
     const conversacion = await this.resolverConversacion(userId, documentId, conversationId);
     const materiales = this.intencion.detectar(mensaje);
@@ -158,7 +161,7 @@ export class ChatService {
 
     const diagrama = this.intencion.detectarDiagrama(mensaje);
     const turno = (await this.usuarios.usaGemini(userId))
-      ? await this.prepararTurno(userId, conversacion, mensaje, diagrama, idioma, modo)
+      ? await this.prepararTurno(userId, conversacion, mensaje, diagrama, idioma, modo, detalle)
       : null;
 
     const mensajeUsuario = await this.mensajes.save(
@@ -184,6 +187,7 @@ export class ChatService {
           idioma,
           tutor: modo === 'tutor',
           pidioDiagrama: diagrama !== null,
+          detalle,
         }),
         senal,
       );
@@ -315,6 +319,7 @@ export class ChatService {
     diagrama: TipoDiagramaPedido | null = null,
     idioma: 'es' | 'en' = 'es',
     modo: 'tutor' | undefined = undefined,
+    detalle: 'brief' | 'normal' | 'deep' = 'normal',
   ): Promise<Turno> {
     const documento = await this.documentos.obtenerConTexto(userId, conversacion.documentId);
     const preferencias = await this.usuarios.obtenerPreferencias(userId);
@@ -335,6 +340,7 @@ export class ChatService {
       diagrama: diagrama ?? undefined,
       idioma,
       modo,
+      detalle,
     });
 
     const historial = await this.historialReciente(conversacion.id);

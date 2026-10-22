@@ -89,6 +89,7 @@ export class ChatController {
         dto.conversationId,
         dto.idioma,
         dto.modo,
+        dto.detalle,
       );
     } catch (error) {
       emitir({
