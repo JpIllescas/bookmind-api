@@ -18,7 +18,7 @@ const XP_BASE_LECCION = 10;
 const XP_POR_ACIERTO = 2;
 const XP_BONUS_PERFECTA = 5;
 
-export type EstadoUnidad = 'bloqueada' | 'disponible' | 'en_curso' | 'aprobada' | 'dominada';
+export type EstadoUnidad = 'bloqueada' | 'disponible' | 'en_curso' | 'aprobada' | 'dominada' | 'sin_leccion';
 
 export interface UnidadRuta {
   chapterId: string;
@@ -54,9 +54,10 @@ export class RutaService {
 
   async ruta(userId: string, documentId: string): Promise<RutaLibro> {
     const documento = await this.documentos.obtener(userId, documentId);
-    const [unidades, intentos] = await Promise.all([
+    const [unidades, intentos, sinLeccion] = await Promise.all([
       this.lecciones.unidadesDe(documentId),
       this.intentos.find({ where: { userId, documentId } }),
+      this.lecciones.sinLeccionDe(documentId),
     ]);
 
     const porUnidad = new Map<string, LessonAttempt[]>();
@@ -76,10 +77,12 @@ export class RutaService {
 
       // Se desbloquea al aprobar la anterior; la primera siempre está abierta.
       const desbloqueada = indice === 0 || anteriorAprobada;
-      const estado = this.estadoDe(desbloqueada, coronas, propios.length);
+      // Una unidad sin lección no se puede aprobar: si estaba abierta, deja pasar a la siguiente.
+      const omitida = desbloqueada && sinLeccion.has(unidad.id);
+      const estado = omitida ? 'sin_leccion' : this.estadoDe(desbloqueada, coronas, propios.length);
 
-      if (actual === -1 && desbloqueada && coronas === 0) actual = indice;
-      anteriorAprobada = coronas > 0;
+      if (actual === -1 && desbloqueada && !omitida && coronas === 0) actual = indice;
+      anteriorAprobada = omitida || coronas > 0;
 
       return {
         chapterId: unidad.id,
@@ -95,6 +98,8 @@ export class RutaService {
     });
 
     const resumen = this.documentos.comoResumen(documento);
+    const conLeccion = armadas.filter((u) => !sinLeccion.has(u.chapterId));
+    const ultima = armadas.findLastIndex((u) => !sinLeccion.has(u.chapterId));
 
     return {
       documento: {
@@ -105,9 +110,9 @@ export class RutaService {
       },
       unidades: armadas,
       // Todo aprobado: se queda en la última para seguir sumando coronas.
-      actual: actual === -1 ? Math.max(0, armadas.length - 1) : actual,
-      coronas: armadas.reduce((suma, u) => suma + u.coronas, 0),
-      coronasPosibles: armadas.length * CORONAS_MAXIMAS,
+      actual: actual === -1 ? Math.max(0, ultima) : actual,
+      coronas: conLeccion.reduce((suma, u) => suma + u.coronas, 0),
+      coronasPosibles: conLeccion.length * CORONAS_MAXIMAS,
     };
   }
 
