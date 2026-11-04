@@ -122,6 +122,8 @@ export const CONSTANTS = {
     (configService.get<string>('OCR_ENABLED') ?? 'true') === 'true',
   OCR_MIN_CARACTERES: numeroEnRango('OCR_MIN_CARACTERES', 50, 0, 5_000),
   OCR_CONFIANZA_MINIMA: numeroEnRango('OCR_CONFIANZA_MINIMA', 0.7, 0, 1),
+  // Hilos de onnxruntime en el hilo de embeddings: con 2 vCPU, el otro núcleo atiende peticiones.
+  EMBEDDINGS_HILOS: numeroEnRango('EMBEDDINGS_HILOS', 1, 1, 64),
 
   // Peticiones por minuto y cliente; se sube solo para medir capacidad con k6.
   THROTTLE_LIMIT: numeroEnRango('THROTTLE_LIMIT', 120, 1, 1_000_000),
@@ -130,6 +132,9 @@ export const CONSTANTS = {
   // Almacenamiento de libros: vacío = s3 si están sus variables, si no local
   STORAGE_DRIVER: validarDriverAlmacenamiento(configService.get<string>('STORAGE_DRIVER')),
   UPLOAD_PATH: configService.get<string>('UPLOAD_PATH') || './uploads',
+  // Copia en disco de los libros de S3 para servir los rangos del visor; 0 la apaga.
+  CACHE_LIBROS_PATH: configService.get<string>('CACHE_LIBROS_PATH') || './cache-libros',
+  CACHE_LIBROS_MB: numeroEnRango('CACHE_LIBROS_MB', 5120, 0, 1_000_000),
 
   // Neon Object Storage (S3-compatible)
   AWS_ENDPOINT_URL_S3: configService.get<string>('AWS_ENDPOINT_URL_S3') ?? '',

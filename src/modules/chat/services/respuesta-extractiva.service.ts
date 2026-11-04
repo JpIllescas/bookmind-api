@@ -78,14 +78,14 @@ const raizDe = (palabra: string) => palabra.slice(0, LARGO_RAIZ);
 
 /** Raíces de las palabras con contenido de un texto, en orden. */
 function raices(texto: string): string[] {
-  return (sinAcentos(texto).match(/[\p{L}\p{N}]+/gu) ?? []).filter((palabra) => palabra.length >= 4).map(raizDe);
+  return (sinAcentos(texto).match(/[\p{L}\p{N}]+/gu) ?? ([] as string[])).filter((palabra) => palabra.length >= 4).map(raizDe);
 }
 
 /** Las palabras de la pregunta que dicen de qué trata, sin acentos ni repetir. */
 export function palabrasDeLaPregunta(pregunta: string): string[] {
   return [
     ...new Set(
-      (sinAcentos(pregunta).match(/[\p{L}\p{N}]+/gu) ?? []).filter(
+      (sinAcentos(pregunta).match(/[\p{L}\p{N}]+/gu) ?? ([] as string[])).filter(
         (palabra) => palabra.length >= 4 && !PALABRAS_DE_PREGUNTA.has(palabra),
       ),
     ),

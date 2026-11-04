@@ -59,6 +59,8 @@ async function bootstrap() {
     // Sin estas cabeceras el visor no puede pedir el PDF por trozos.
     allowedHeaders: ['Authorization', 'Content-Type', 'Range'],
     exposedHeaders: ['Accept-Ranges', 'Content-Range', 'Content-Length'],
+    // Sin esto el navegador repite el OPTIONS antes de cada petición con token; Chrome lo recuerda hasta 2 h.
+    maxAge: 7200,
   });
 
   // Cierre ordenado: ante SIGTERM/SIGINT cierra conexiones de BD y crons.

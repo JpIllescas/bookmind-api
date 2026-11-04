@@ -1,69 +1,34 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 
 import { CONSTANTS } from '../../../common/configuration/constants';
+import { ColaEmbeddings } from './cola-embeddings';
+import { HiloEmbeddings } from './hilo-embeddings';
 
-type Extractor = (
-  textos: string[],
-  opciones: { pooling: 'mean'; normalize: boolean },
-) => Promise<{ tolist: () => number[][] }>;
-
-/** Cuántos textos se embeben por lote. Más grande satura la memoria. */
-const LOTE = 32;
+/** Lotes chicos para el indexado: una consulta espera como mucho uno. Las consultas son pocas frases. */
+const LOTES = { indexado: 8, consulta: 32 };
 
 /** Embeddings locales (pieza 2) en CPU: el texto nunca sale del servidor. */
 @Injectable()
-export class EmbeddingsService {
-  private readonly logger = new Logger(EmbeddingsService.name);
-  private extractor?: Extractor;
-  private cargando?: Promise<Extractor>;
-
-  /** Carga perezosa; la promesa se guarda para no descargar el modelo dos veces. */
-  private async obtenerExtractor(): Promise<Extractor> {
-    if (this.extractor) return this.extractor;
-
-    this.cargando ??= (async () => {
-      const { pipeline, env } = await import('@huggingface/transformers');
-      env.cacheDir = './.cache';
-
-      this.logger.log(`Cargando modelo de embeddings ${CONSTANTS.EMBEDDING_MODEL}…`);
-      const inicio = Date.now();
-
-      const extractor = (await pipeline(
-        'feature-extraction',
-        CONSTANTS.EMBEDDING_MODEL,
-      )) as unknown as Extractor;
-
-      this.logger.log(`Modelo listo en ${((Date.now() - inicio) / 1000).toFixed(1)}s.`);
-      this.extractor = extractor;
-      return extractor;
-    })();
-
-    return this.cargando;
-  }
+export class EmbeddingsService implements OnModuleDestroy {
+  private readonly hilo = new HiloEmbeddings({
+    modelo: CONSTANTS.EMBEDDING_MODEL,
+    hilos: CONSTANTS.EMBEDDINGS_HILOS,
+    cacheDir: './.cache',
+  });
+  private readonly cola = new ColaEmbeddings(this.hilo, LOTES);
 
   /** Embebe fragmentos del libro. Los modelos e5 esperan el prefijo `passage:`. */
   embeberPasajes(textos: string[]): Promise<number[][]> {
-    return this.embeber(textos, 'passage: ');
+    return this.cola.embeber(textos.map((t) => 'passage: ' + t), 'indexado');
   }
 
   /** Embebe afirmaciones a verificar. Los e5 usan `query:` para el otro lado. */
   embeberConsultas(textos: string[]): Promise<number[][]> {
-    return this.embeber(textos, 'query: ');
+    return this.cola.embeber(textos.map((t) => 'query: ' + t), 'consulta');
   }
 
-  private async embeber(textos: string[], prefijo: string): Promise<number[][]> {
-    if (textos.length === 0) return [];
-
-    const extractor = await this.obtenerExtractor();
-    const vectores: number[][] = [];
-
-    for (let i = 0; i < textos.length; i += LOTE) {
-      const lote = textos.slice(i, i + LOTE).map((t) => prefijo + t);
-      const salida = await extractor(lote, { pooling: 'mean', normalize: true });
-      vectores.push(...salida.tolist());
-    }
-
-    return vectores;
+  onModuleDestroy(): Promise<void> {
+    return this.hilo.terminar();
   }
 
   /** Similitud coseno; los vectores ya vienen normalizados del modelo. */

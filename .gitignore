@@ -34,3 +34,9 @@ uploads/
 .idea/
 Thumbs.db
 Desktop.ini
+
+# --- Resultados de scripts/medir-bloqueo.cjs ---
+scripts/medir-bloqueo-*.json
+
+# --- Copia local de los libros de S3 (CACHE_LIBROS_PATH) ---
+cache-libros/
