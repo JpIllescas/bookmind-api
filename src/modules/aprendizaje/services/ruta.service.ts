@@ -1,4 +1,4 @@
-import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -135,6 +135,15 @@ export class RutaService {
     desfaseMinutos: number,
   ): Promise<{ xp: number; coronas: number; corona: boolean; resumen: ResumenGamificacion }> {
     await this.exigirAbierta(userId, documentId, chapterId);
+
+    // El total sale de la lección guardada: sin esto se podía registrar un resultado de una lección que no existe.
+    const esperados = await this.lecciones.totalDeEjercicios(documentId, chapterId);
+    if (esperados === 0) {
+      throw new BadRequestException('Abre la lección de esta unidad antes de guardar un resultado.');
+    }
+    if (dto.total !== esperados) {
+      throw new BadRequestException('El resultado no coincide con la lección de esta unidad. Ábrela de nuevo y vuelve a intentarlo.');
+    }
 
     const aciertos = Math.min(dto.aciertos, dto.total);
     const perfecta = aciertos === dto.total;

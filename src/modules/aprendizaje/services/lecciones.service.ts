@@ -63,6 +63,12 @@ export class LeccionesService {
     return new Set(guardadas.filter((l) => l.ejercicios.length === 0).map((l) => l.chapterId));
   }
 
+  /** Cuántos ejercicios tiene la lección guardada de la unidad; 0 si nunca se abrió o no dio para lección. */
+  async totalDeEjercicios(documentId: string, chapterId: string): Promise<number> {
+    const guardada = await this.lecciones.findOneBy({ documentId, chapterId });
+    return guardada?.ejercicios.length ?? 0;
+  }
+
   async obtener(
     userId: string,
     documentId: string,

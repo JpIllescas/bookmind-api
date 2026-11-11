@@ -2,6 +2,7 @@ import { createHash } from 'crypto';
 
 import { Chapter } from '../../documents/entities/chapter.entity';
 import { TramoCapitulos, agruparCapitulos } from '../../documents/services/capitulos.service';
+import { titulosDeUnidad } from './titulos-de-unidad';
 
 /** Páginas por unidad cuando el libro no trae capítulos: alcanza para una lección sin hacerla eterna. */
 const PAGINAS_POR_UNIDAD = 12;
@@ -54,7 +55,9 @@ export function unidadesDelLibro(
 ): TramoCapitulos[] {
   const estudiables = capitulos.filter((capitulo) => !esPreliminar(capitulo));
   // Si quitar los preliminares deja el libro sin unidades, se conservan todas.
-  const utiles = estudiables.length > 0 ? estudiables : capitulos;
+  const elegidos = estudiables.length > 0 ? estudiables : capitulos;
+  const titulos = titulosDeUnidad(elegidos.map((capitulo) => capitulo.titulo));
+  const utiles = elegidos.map((capitulo, i) => ({ ...capitulo, titulo: titulos[i] }));
 
   return utiles.length > 0
     ? agruparCapitulos(utiles, maximo)
