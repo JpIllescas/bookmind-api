@@ -9,14 +9,11 @@ import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
 import { DocumentsService } from '../../documents/documents.service';
-import {
-  CapitulosService,
-  TramoCapitulos,
-  agruparCapitulos,
-} from '../../documents/services/capitulos.service';
+import { CapitulosService, TramoCapitulos } from '../../documents/services/capitulos.service';
 import { MlService } from '../../ml/ml.service';
 import { Ejercicio, Lesson } from '../entities/lesson.entity';
 import { EjerciciosService, ItemFlashcard, ItemQuiz } from './ejercicios.service';
+import { unidadesDelLibro } from './unidades-del-libro';
 
 /** Más unidades que esto y la ruta deja de caber en una pantalla razonable. */
 export const MAXIMO_UNIDADES = 40;
@@ -52,9 +49,9 @@ export class LeccionesService {
     private readonly ejercicios: EjerciciosService,
   ) {}
 
-  /** Unidades del libro; la unidad se identifica por su primer capítulo. */
-  async unidadesDe(documentId: string): Promise<TramoCapitulos[]> {
-    return agruparCapitulos(await this.capitulos.listar(documentId), MAXIMO_UNIDADES);
+  /** Unidades del libro; la unidad se identifica por su primer capítulo o, sin capítulos, por su tramo de páginas. */
+  async unidadesDe(documentId: string, totalPaginas: number): Promise<TramoCapitulos[]> {
+    return unidadesDelLibro(documentId, await this.capitulos.listar(documentId), totalPaginas, MAXIMO_UNIDADES);
   }
 
   /** Unidades que ya se intentaron y no dan para una lección. */
@@ -72,9 +69,9 @@ export class LeccionesService {
     chapterId: string,
     regenerar = false,
   ): Promise<LeccionArmada> {
-    await this.documentos.obtener(userId, documentId);
+    const documento = await this.documentos.obtener(userId, documentId);
 
-    const unidad = (await this.unidadesDe(documentId)).find((u) => u.id === chapterId);
+    const unidad = (await this.unidadesDe(documentId, documento.pages)).find((u) => u.id === chapterId);
     if (!unidad) {
       throw new NotFoundException('Esa unidad no existe en este libro.');
     }

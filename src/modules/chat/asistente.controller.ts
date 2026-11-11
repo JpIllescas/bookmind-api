@@ -53,17 +53,21 @@ export class AsistenteController {
       };
     }
 
+    const conElMotor = () => this.extractiva.enBiblioteca(dto.pregunta, utiles, dto.idioma);
+    // Gemini solo mejora: si falla, la respuesta sale del motor propio.
     const respuesta = (await this.usuarios.usaGemini(usuario.id))
-      ? await this.llm.responder({
-          systemPrompt: this.prompts.construirBiblioteca(
-            utiles,
-            await this.usuarios.obtenerPreferencias(usuario.id),
-            dto.idioma,
-          ),
-          historial: [],
-          mensaje: dto.pregunta,
-        })
-      : this.extractiva.enBiblioteca(dto.pregunta, utiles, dto.idioma);
+      ? await this.llm
+          .responder({
+            systemPrompt: this.prompts.construirBiblioteca(
+              utiles,
+              await this.usuarios.obtenerPreferencias(usuario.id),
+              dto.idioma,
+            ),
+            historial: [],
+            mensaje: dto.pregunta,
+          })
+          .catch(conElMotor)
+      : conElMotor();
 
     return {
       respuesta,

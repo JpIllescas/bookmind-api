@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
 import { Repository } from 'typeorm';
 
@@ -55,7 +55,7 @@ export class RutaService {
   async ruta(userId: string, documentId: string): Promise<RutaLibro> {
     const documento = await this.documentos.obtener(userId, documentId);
     const [unidades, intentos, sinLeccion] = await Promise.all([
-      this.lecciones.unidadesDe(documentId),
+      this.lecciones.unidadesDe(documentId, documento.pages),
       this.intentos.find({ where: { userId, documentId } }),
       this.lecciones.sinLeccionDe(documentId),
     ]);
@@ -116,6 +116,16 @@ export class RutaService {
     };
   }
 
+  /** El candado también vale en el servidor: sin esto, la dirección de una lección cerrada la abría igual. */
+  async exigirAbierta(userId: string, documentId: string, chapterId: string): Promise<void> {
+    const unidad = (await this.ruta(userId, documentId)).unidades.find((u) => u.chapterId === chapterId);
+
+    if (!unidad) throw new NotFoundException('Esa unidad no existe en este libro.');
+    if (unidad.estado === 'bloqueada') {
+      throw new ForbiddenException('Esta unidad todavía está cerrada. Aprueba la anterior para abrirla.');
+    }
+  }
+
   /** Guarda la lección terminada y devuelve el XP ganado con el resumen actualizado. */
   async registrar(
     userId: string,
@@ -124,7 +134,7 @@ export class RutaService {
     dto: RegistrarLeccionDto,
     desfaseMinutos: number,
   ): Promise<{ xp: number; coronas: number; corona: boolean; resumen: ResumenGamificacion }> {
-    await this.documentos.obtener(userId, documentId);
+    await this.exigirAbierta(userId, documentId, chapterId);
 
     const aciertos = Math.min(dto.aciertos, dto.total);
     const perfecta = aciertos === dto.total;

@@ -109,13 +109,16 @@ export class ChatService {
     const turno = (await this.usuarios.usaGemini(userId))
       ? await this.prepararTurno(userId, conversacion, mensaje, diagrama, idioma, modo)
       : null;
-    const respuesta = turno
-      ? await this.llm.responder(this.peticionDe(turno, mensaje))
-      : await this.extractiva.responder(conversacion.documentId, mensaje, {
+    const conElMotor = () =>
+      this.extractiva.responder(conversacion.documentId, mensaje, {
         idioma,
         tutor: modo === 'tutor',
         pidioDiagrama: diagrama !== null,
       });
+    // Gemini solo mejora: si falla, la respuesta sale del motor propio.
+    const respuesta = turno
+      ? await this.llm.responder(this.peticionDe(turno, mensaje)).catch(conElMotor)
+      : await conElMotor();
     const guardada = await this.cerrarTurno(userId, conversacion, mensaje, respuesta);
 
     return {
@@ -174,12 +177,8 @@ export class ChatService {
 
     emitir({ tipo: 'inicio', conversationId: conversacion.id, mensajeUsuarioId: mensajeUsuario.id });
 
-    let flujo: AsyncIterable<string>;
-    if (turno) {
-      const peticion = { ...this.peticionDe(turno, mensaje), senal };
-      flujo = this.llm.responderStream ? this.llm.responderStream(peticion) : streamDesdeRespuesta(this.llm, peticion);
-    } else {
-      flujo = this.enTrozos(
+    const conElMotor = () =>
+      this.enTrozos(
         this.extractiva.responder(conversacion.documentId, mensaje, {
           idioma,
           tutor: modo === 'tutor',
@@ -187,6 +186,14 @@ export class ChatService {
         }),
         senal,
       );
+
+    let flujo: AsyncIterable<string>;
+    if (turno) {
+      const peticion = { ...this.peticionDe(turno, mensaje), senal };
+      const delModelo = this.llm.responderStream ? this.llm.responderStream(peticion) : streamDesdeRespuesta(this.llm, peticion);
+      flujo = this.conRespaldo(delModelo, conElMotor, senal);
+    } else {
+      flujo = conElMotor();
     }
 
     let texto = '';
@@ -234,6 +241,25 @@ export class ChatService {
       contextoParcial: turno?.esParcial ?? false,
       titulo: actualizada.titulo,
     });
+  }
+
+  /** Si el modelo falla antes de escribir nada, responde el motor propio; a media respuesta el error sigue su curso. */
+  private async *conRespaldo(
+    delModelo: AsyncIterable<string>,
+    conElMotor: () => AsyncIterable<string>,
+    senal: AbortSignal,
+  ): AsyncIterable<string> {
+    let escrito = false;
+
+    try {
+      for await (const trozo of delModelo) {
+        escrito = true;
+        yield trozo;
+      }
+    } catch (error) {
+      if (escrito || senal.aborted) throw error;
+      yield* conElMotor();
+    }
   }
 
   /** La respuesta extractiva sale entera de una vez; en trozos se ve igual que la del modelo. */

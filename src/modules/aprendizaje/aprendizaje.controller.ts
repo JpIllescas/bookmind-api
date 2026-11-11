@@ -46,21 +46,23 @@ export class AprendizajeController {
   }
 
   @Get('documentos/:id/unidades/:chapterId/leccion')
-  leccion(
+  async leccion(
     @CurrentUser() usuario: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
     @Param('chapterId', ParseUUIDPipe) chapterId: string,
   ) {
+    await this.ruta.exigirAbierta(usuario.id, id, chapterId);
     return this.lecciones.obtener(usuario.id, id, chapterId);
   }
 
   /** Otra tanda de ejercicios de la misma unidad. */
   @Post('documentos/:id/unidades/:chapterId/leccion/regenerar')
-  regenerar(
+  async regenerar(
     @CurrentUser() usuario: AuthUser,
     @Param('id', ParseUUIDPipe) id: string,
     @Param('chapterId', ParseUUIDPipe) chapterId: string,
   ) {
+    await this.ruta.exigirAbierta(usuario.id, id, chapterId);
     return this.lecciones.obtener(usuario.id, id, chapterId, true);
   }
 
